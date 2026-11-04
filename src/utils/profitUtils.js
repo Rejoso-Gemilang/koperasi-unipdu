@@ -39,38 +39,31 @@ export function getUnitCost(stockData = {}) {
 /**
  * Resolve the cost of one recorded sale line.
  *
- * New sale records contain stockWorth and costPrice. Older records may have
- * a missing/invalid stockWorth, so use the stock item's configured cost as a
- * backwards-compatible display fallback instead of treating the sale total
- * as pure profit.
+ * costPrice/costPerUnit snapshots apply to every unit sold. stockWorth is the
+ * inventory value actually deducted, which can be zero or cover fewer units
+ * when recorded stock is short. It must not override the full sale cost.
+ * Older records without a unit-cost snapshot use their saved stockWorth or,
+ * if unavailable, the stock item's configured cost as a display fallback.
  */
 export function getSaleCost(
   saleRecord = {},
   stockData = {},
   fallbackQuantity = 0
 ) {
-  const storedStockWorth = toFiniteNumber(saleRecord.stockWorth);
-  const hasCostSnapshot =
-    Object.prototype.hasOwnProperty.call(saleRecord, "costPrice") ||
-    Object.prototype.hasOwnProperty.call(saleRecord, "costPerUnit");
-
-  if (
-    storedStockWorth !== null &&
-    (storedStockWorth > 0 || hasCostSnapshot)
-  ) {
-    return storedStockWorth;
-  }
-
+  const quantity =
+    toFiniteNumber(saleRecord.quantity) ?? toFiniteNumber(fallbackQuantity) ?? 0;
   const recordedUnitCost = toFiniteNumber(
     saleRecord.costPrice ?? saleRecord.costPerUnit
   );
-  if (recordedUnitCost !== null && recordedUnitCost >= 0 && hasCostSnapshot) {
-    const quantity =
-      toFiniteNumber(saleRecord.quantity) ?? toFiniteNumber(fallbackQuantity) ?? 0;
+  if (recordedUnitCost !== null && recordedUnitCost >= 0) {
     return recordedUnitCost * quantity;
   }
 
-  const quantity = toFiniteNumber(fallbackQuantity) ?? 0;
+  const storedStockWorth = toFiniteNumber(saleRecord.stockWorth);
+  if (storedStockWorth !== null && storedStockWorth > 0) {
+    return storedStockWorth;
+  }
+
   return getUnitCost(stockData) * quantity;
 }
 

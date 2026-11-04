@@ -37,4 +37,49 @@ describe("profit calculations", () => {
       )
     ).toBe(0);
   });
+
+  test.each([0, 14064])(
+    "costs all sold units when a stock discrepancy deducted inventory worth %s",
+    (stockWorth) => {
+      const sale = {
+        quantity: 7,
+        costPrice: 7032,
+        stockWorth,
+        isStockDiscrepant: true,
+      };
+
+      expect(getSaleCost(sale, { lastPurchasePrice: 7033 }, 7)).toBe(49224);
+      // Display calculations must preserve the inventory deduction for reverts.
+      expect(sale.stockWorth).toBe(stockWorth);
+    }
+  );
+
+  test("uses a costPerUnit snapshot and the supplied quantity", () => {
+    expect(
+      getSaleCost({ costPerUnit: 7032, stockWorth: 0 }, {}, 7)
+    ).toBe(49224);
+  });
+
+  test("preserves a legacy positive cost when no unit cost was saved", () => {
+    expect(
+      getSaleCost(
+        { quantity: 7, stockWorth: 49000 },
+        { lastPurchasePrice: 7033 },
+        7
+      )
+    ).toBe(49000);
+  });
+
+  test.each([null, undefined, Number.NaN])(
+    "does not treat an invalid cost snapshot (%s) as an explicit zero cost",
+    (costPrice) => {
+      expect(
+        getSaleCost(
+          { quantity: 7, costPrice, stockWorth: 0 },
+          { lastPurchasePrice: 7033 },
+          7
+        )
+      ).toBe(49231);
+    }
+  );
 });
