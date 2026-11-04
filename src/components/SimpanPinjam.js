@@ -815,6 +815,22 @@ const SimpanPinjam = () => {
                             </button>
                           )}
 
+                        {/* Rejection while waiting for transfer — before any money has
+                            moved. Matches the decline Super Admin has in SAKU. Covers
+                            restructuring too: handleReject reverts the old loan. */}
+                        {(userRole === "BAK" || isDirector) &&
+                          loan.status === "Menunggu Transfer BAK" && (
+                            <button
+                              className="reject-btn"
+                              onClick={() =>
+                                setSelectedLoan({ ...loan, action: "reject" })
+                              }
+                              title="Tolak"
+                            >
+                              ✕ Tolak
+                            </button>
+                          )}
+
                         {/* Revision Button (non-restructuring only) */}
                         {!loan.restructuredFromLoanId &&
                           (userRole === "BAK" || isDirector) &&
