@@ -678,3 +678,92 @@ describe("BulkPurchaseModal whole numbers", () => {
     expect(stockUpdate).toEqual({ id: "p1", stock: 12, stockValue: 7000, lastPurchasePrice: 1000 });
   });
 });
+
+describe("BulkPurchaseModal checks the unit when the cost is above the selling price", () => {
+  const AMPLOP = {
+    id: "amplop",
+    itemId: "8991389247037",
+    name: "Amplop Paperline 95x152 Mm",
+    base_unit: "pcs",
+    bulk_unit_name: "pack",
+    bulk_unit_conversion: 100,
+    satuan: ["pcs", "pack"],
+    pricePerUnit: { pcs: 500, pack: 15000 },
+    stock: 0,
+    stockValue: 0,
+  };
+
+  // The modal drops a draft row whose product the host doesn't list
+  beforeAll(() => {
+    PRODUCTS.amplop = AMPLOP;
+  });
+  afterAll(() => {
+    delete PRODUCTS.amplop;
+  });
+
+  // A purchase saved as a draft, ready to submit (saving needs an uploaded nota)
+  const draftOf = (quantity, unit, hargaSatuan, subtotal) => {
+    localStorage.setItem(
+      "retail_purchase_draft_rows",
+      JSON.stringify([{ id: 1, product: AMPLOP, quantity, unit, hargaSatuan, subtotal }])
+    );
+    localStorage.setItem(
+      "retail_purchase_draft_uploaded_nota",
+      JSON.stringify({ fileName: "nota.pdf", downloadURL: "https://example.test/nota.pdf" })
+    );
+    localStorage.setItem("retail_purchase_draft_supplier", "ATK RA");
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    generateIncrementalId.mockResolvedValue("BP-0001");
+    jest.spyOn(window, "alert").mockImplementation(() => {});
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  test("28 pcs at Rp 13.000 each asks first, and saves nothing when declined", async () => {
+    const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+    const onSave = jest.fn(() => Promise.resolve());
+    draftOf("28", "pcs", "13.000", "364.000");
+    render(<Host onSave={onSave} />);
+    openModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0]).toContain("Amplop Paperline 95x152 Mm: beli Rp 13.000 per pcs, jual Rp 500 per pcs");
+    expect(confirm.mock.calls[0][0]).toContain("Cek satuannya");
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  test("it can still be saved on purpose", async () => {
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    const onSave = jest.fn(() => Promise.resolve());
+    draftOf("28", "pcs", "13.000", "364.000");
+    render(<Host onSave={onSave} />);
+    openModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+
+    await waitFor(() =>
+      expect(onSave.mock.calls.some(([action]) => action === "createTransaction")).toBe(true)
+    );
+  });
+
+  test("the same purchase entered as 28 pack does not ask", async () => {
+    const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+    const onSave = jest.fn(() => Promise.resolve());
+    // 28 pack at Rp 13.000 = Rp 130 per pcs, below the Rp 500 selling price
+    draftOf("28", "pack", "13.000", "364.000");
+    render(<Host onSave={onSave} />);
+    openModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+
+    await waitFor(() =>
+      expect(onSave.mock.calls.some(([action]) => action === "createTransaction")).toBe(true)
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+});

@@ -5,6 +5,7 @@ import { uploadFile } from "../firebase";
 import "../styles/BulkPurchaseModal.css";
 import { convertToSmallestUnit } from "../utils/transaksiUtils";
 import { roundRupiah } from "../utils/profitUtils";
+import { findCostAboveSellingPrice } from "../utils/purchaseChecks";
 import {
   WHOLE_NUMBER_MESSAGE,
   hasDecimalSeparator,
@@ -569,6 +570,47 @@ const BulkPurchaseModal = ({
     if (isSubmitting) return;
     if (!validateForm()) {
       return;
+    }
+
+    // A cost per piece above the selling price is nearly always the wrong
+    // unit (pcs typed for packs). Ask once before saving; buying below cost on
+    // purpose is still possible.
+    const costAboveSellingPrice = findCostAboveSellingPrice(
+      rows
+        .filter((row) => row.product && row.quantity && row.subtotal && row.unit)
+        .map((row) => {
+          let quantityInSmallestUnit = 0;
+          try {
+            quantityInSmallestUnit = convertToSmallestUnit(
+              parseFloat(row.quantity),
+              row.unit,
+              row.product
+            );
+          } catch (e) {
+            // A product with no usable conversion is left to the save itself
+          }
+          const base = row.product.base_unit || row.product.smallestUnit;
+          return {
+            name: row.product.name,
+            unit: base,
+            // Retail items price per unit; warehouse items have one base price
+            sellPrice: row.product.pricePerUnit?.[base] ?? row.product.price ?? 0,
+            subtotal: parseRupiah(row.subtotal),
+            quantityInSmallestUnit,
+          };
+        })
+    );
+    if (costAboveSellingPrice.length > 0) {
+      const lines = costAboveSellingPrice
+        .map(
+          (line) =>
+            `• ${line.name}: beli Rp ${fmtAmount(line.costPrice)} per ${line.unit}, jual Rp ${fmtAmount(line.sellPrice)} per ${line.unit}`
+        )
+        .join("\n");
+      const proceed = window.confirm(
+        `Harga beli lebih tinggi dari harga jual:\n${lines}\n\nCek satuannya (mis. pack, bukan pcs). Tetap simpan?`
+      );
+      if (!proceed) return;
     }
 
     setIsSubmitting(true);
