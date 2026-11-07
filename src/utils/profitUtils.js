@@ -11,6 +11,17 @@ export function toFiniteNumber(value) {
 }
 
 /**
+ * Rupiah amounts (prices, costs, stock values) are saved as whole numbers.
+ * Anything calculated, such as a unit price from a total or an average cost,
+ * goes through this before it is shown in a field or written to the database.
+ * Anything that is not a number becomes 0.
+ */
+export function roundRupiah(value) {
+  const numeric = toFiniteNumber(value);
+  return numeric === null ? 0 : Math.round(numeric) || 0;
+}
+
+/**
  * Return the unit cost used for a sale.
  *
  * The inventory value is preferred when it can provide a valid weighted
@@ -39,6 +50,12 @@ export function getUnitCost(stockData = {}) {
 /**
  * Resolve the cost of one recorded sale line.
  *
+ * lineCost is the whole-rupiah cost of the full line, saved with the sale.
+ * It is exact where the unit cost snapshot is not: costPrice is rounded to a
+ * whole rupiah per smallest unit, and a few rupiah per gram is a few percent
+ * of the cost of a sale. Sales saved before lineCost existed fall back to the
+ * rules below.
+ *
  * costPrice/costPerUnit snapshots apply to every unit sold. stockWorth is the
  * inventory value actually deducted, which can be zero or cover fewer units
  * when recorded stock is short. It must not override the full sale cost.
@@ -50,6 +67,11 @@ export function getSaleCost(
   stockData = {},
   fallbackQuantity = 0
 ) {
+  const lineCost = toFiniteNumber(saleRecord.lineCost);
+  if (lineCost !== null && lineCost >= 0) {
+    return lineCost;
+  }
+
   const quantity =
     toFiniteNumber(saleRecord.quantity) ?? toFiniteNumber(fallbackQuantity) ?? 0;
   const recordedUnitCost = toFiniteNumber(

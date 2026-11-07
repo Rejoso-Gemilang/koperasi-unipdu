@@ -7,6 +7,23 @@
 // never counted in purchase or missing-stock totals.
 import { getUnitCost, toFiniteNumber } from "./profitUtils";
 
+// Stock quantities are whole numbers: no kg with a comma, no half pieces.
+// A field that holds one refuses a decimal separator (a comma or a dot)
+// instead of quietly dropping it, which would turn "0,5" into 5.
+export const WHOLE_NUMBER_MESSAGE = "Jumlah harus bilangan bulat (tanpa desimal)";
+
+export const hasDecimalSeparator = (typed) => /[.,]/.test(String(typed ?? ""));
+
+// What a whole-number field keeps of what was typed or pasted.
+export const keepDigits = (typed) => String(typed ?? "").replace(/\D/g, "");
+
+// The number in a whole-number field, or NaN when it is empty, has a decimal
+// part, or is not a number at all.
+export const parseWholeNumber = (value) => {
+  const text = String(value ?? "").trim();
+  return /^\d+$/.test(text) ? parseInt(text, 10) : NaN;
+};
+
 // transactionVia written by the Tetapkan Stok dialogs.
 export const STOCK_CORRECTION_VIA = "stockSetTo";
 

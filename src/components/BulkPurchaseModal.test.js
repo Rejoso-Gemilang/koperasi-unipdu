@@ -101,7 +101,7 @@ const fillFirstRow = async () => {
   fireEvent.change(search, { target: { value: "Kertas" } });
   fireEvent.mouseDown(await screen.findByText("Kertas A4"));
 
-  fireEvent.change(screen.getByPlaceholderText("Jumlah (mis: 1.5)"), { target: { value: "2" } });
+  fireEvent.change(screen.getByPlaceholderText("Jumlah"), { target: { value: "2" } });
   fireEvent.change(screen.getByLabelText("Harga satuan"), { target: { value: "1000" } });
 };
 
@@ -132,7 +132,7 @@ describe("BulkPurchaseModal (create mode)", () => {
 
     expect(screen.getAllByPlaceholderText("Cari produk...")).toHaveLength(3);
     screen.getAllByPlaceholderText("Cari produk...").forEach((input) => expect(input).toHaveValue(""));
-    screen.getAllByPlaceholderText("Jumlah (mis: 1.5)").forEach((input) => expect(input).toHaveValue(""));
+    screen.getAllByPlaceholderText("Jumlah").forEach((input) => expect(input).toHaveValue(""));
     screen.getAllByLabelText("Harga satuan").forEach((input) => expect(input).toHaveValue(""));
     expect(screen.getByPlaceholderText("Masukkan nama supplier...")).toHaveValue("");
     expect(screen.queryByText(/File berhasil diupload/)).not.toBeInTheDocument();
@@ -156,7 +156,7 @@ describe("BulkPurchaseModal (create mode)", () => {
     openModal();
 
     screen.getAllByPlaceholderText("Cari produk...").forEach((input) => expect(input).toHaveValue(""));
-    screen.getAllByPlaceholderText("Jumlah (mis: 1.5)").forEach((input) => expect(input).toHaveValue(""));
+    screen.getAllByPlaceholderText("Jumlah").forEach((input) => expect(input).toHaveValue(""));
     expect(screen.getByText("Rp 0")).toBeInTheDocument();
   });
 
@@ -416,7 +416,7 @@ describe("BulkPurchaseModal follows the UI guide", () => {
       openModal();
       await pickFirstProduct();
 
-      fireEvent.change(screen.getAllByPlaceholderText("Jumlah (mis: 1.5)")[0], { target: { value: "200" } });
+      fireEvent.change(screen.getAllByPlaceholderText("Jumlah")[0], { target: { value: "200" } });
       fireEvent.change(screen.getAllByLabelText("Harga satuan")[0], { target: { value: "10" } });
       expect(screen.getAllByLabelText("Subtotal")[0]).toHaveValue("2.000");
 
@@ -424,7 +424,7 @@ describe("BulkPurchaseModal follows the UI guide", () => {
       fireEvent.click(screen.getAllByRole("button", { name: "Satuan" })[0]);
       fireEvent.click(screen.getByRole("option", { name: "pack" }));
 
-      expect(screen.getAllByPlaceholderText("Jumlah (mis: 1.5)")[0]).toHaveValue("2");
+      expect(screen.getAllByPlaceholderText("Jumlah")[0]).toHaveValue("2");
       expect(screen.getAllByLabelText("Harga satuan")[0]).toHaveValue("1.000");
       expect(screen.getAllByLabelText("Subtotal")[0]).toHaveValue("2.000");
     });
@@ -483,7 +483,7 @@ describe("BulkPurchaseModal follows the UI guide", () => {
       render(<Host onSave={jest.fn(() => Promise.resolve())} />);
       openModal();
 
-      const [quantity] = screen.getAllByPlaceholderText("Jumlah (mis: 1.5)");
+      const [quantity] = screen.getAllByPlaceholderText("Jumlah");
       expect(quantity.parentElement).not.toHaveTextContent("Rp");
     });
   });
@@ -567,5 +567,114 @@ describe("BulkPurchaseModal follows the UI guide", () => {
     expect(screen.getByRole("button", { name: "Batal" })).toBeInTheDocument();
     expect(screen.queryByText("Submit")).not.toBeInTheDocument();
     expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+  });
+});
+
+describe("BulkPurchaseModal whole numbers", () => {
+  const WHOLE_MESSAGE = "Jumlah harus bilangan bulat (tanpa desimal)";
+
+  beforeEach(() => {
+    localStorage.clear();
+    jest.spyOn(window, "alert").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test("refuses a decimal quantity and says why instead of reading 1,5 as 15", () => {
+    render(<Host onSave={jest.fn(() => Promise.resolve())} />);
+    openModal();
+    const [quantity] = screen.getAllByPlaceholderText("Jumlah");
+
+    fireEvent.change(quantity, { target: { value: "2" } });
+    fireEvent.change(quantity, { target: { value: "2,5" } });
+    expect(quantity).toHaveValue("2");
+    expect(screen.getByText(WHOLE_MESSAGE)).toBeInTheDocument();
+
+    fireEvent.change(quantity, { target: { value: "2.5" } });
+    expect(quantity).toHaveValue("2");
+
+    fireEvent.change(quantity, { target: { value: "3" } });
+    expect(quantity).toHaveValue("3");
+    expect(screen.queryByText(WHOLE_MESSAGE)).not.toBeInTheDocument();
+  });
+
+  test("a quantity cannot start with a decimal separator either", () => {
+    render(<Host onSave={jest.fn(() => Promise.resolve())} />);
+    openModal();
+    const [quantity] = screen.getAllByPlaceholderText("Jumlah");
+
+    fireEvent.change(quantity, { target: { value: "0,5" } });
+
+    expect(quantity).toHaveValue("");
+    expect(screen.getByText(WHOLE_MESSAGE)).toBeInTheDocument();
+  });
+
+  test.each([
+    ["10000", "3.333"], // 3333.33 rounds down
+    ["20000", "6.667"], // 6666.67 rounds up
+    ["10001", "3.334"],
+  ])("a total of %s over 3 gives a whole unit price of %s", (total, unitPrice) => {
+    render(<Host onSave={jest.fn(() => Promise.resolve())} />);
+    openModal();
+
+    fireEvent.change(screen.getAllByPlaceholderText("Jumlah")[0], { target: { value: "3" } });
+    fireEvent.change(screen.getAllByLabelText("Subtotal")[0], { target: { value: total } });
+
+    expect(screen.getAllByLabelText("Harga satuan")[0]).toHaveValue(unitPrice);
+  });
+
+  test("a unit price already worked out from the total is rounded again when the quantity changes", () => {
+    render(<Host onSave={jest.fn(() => Promise.resolve())} />);
+    openModal();
+    const [quantity] = screen.getAllByPlaceholderText("Jumlah");
+
+    fireEvent.change(quantity, { target: { value: "3" } });
+    fireEvent.change(screen.getAllByLabelText("Subtotal")[0], { target: { value: "10000" } });
+    expect(screen.getAllByLabelText("Harga satuan")[0]).toHaveValue("3.333");
+
+    // 7 x 3.333 is a whole rupiah amount, with no decimal part to misread
+    fireEvent.change(quantity, { target: { value: "7" } });
+    expect(screen.getAllByLabelText("Subtotal")[0]).toHaveValue("23.331");
+  });
+
+  test("a decimal quantity left in a saved draft blocks saving", () => {
+    localStorage.setItem(
+      "retail_purchase_draft_rows",
+      JSON.stringify([
+        { id: 1, product: PRODUCTS.p1, quantity: "2.5", unit: "pcs", hargaSatuan: "1.000", subtotal: "2.500" },
+      ])
+    );
+    // Saving needs an uploaded nota, which a saved draft keeps as well
+    localStorage.setItem(
+      "retail_purchase_draft_uploaded_nota",
+      JSON.stringify({ fileName: "nota.pdf", downloadURL: "https://example.test/nota.pdf" })
+    );
+    const onSave = jest.fn(() => Promise.resolve());
+    render(<Host onSave={onSave} />);
+    openModal();
+
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+
+    expect(screen.getByText(WHOLE_MESSAGE)).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  test("saves a whole quantity as a whole purchase", async () => {
+    uploadFile.mockResolvedValue("https://example.test/nota.pdf");
+    generateIncrementalId.mockResolvedValue("BP-0001");
+    const onSave = jest.fn(() => Promise.resolve());
+    render(<Host onSave={onSave} />);
+    openModal();
+    await fillFirstRow();
+
+    fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
+
+    await waitFor(() =>
+      expect(onSave.mock.calls.some(([action]) => action === "updateStock")).toBe(true)
+    );
+    const [, stockUpdate] = onSave.mock.calls.find(([action]) => action === "updateStock");
+    expect(stockUpdate).toEqual({ id: "p1", stock: 12, stockValue: 7000, lastPurchasePrice: 1000 });
   });
 });

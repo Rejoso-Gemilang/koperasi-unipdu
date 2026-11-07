@@ -20,6 +20,11 @@ import { useAuth } from "../context/AuthContext";
 import { useFirestore } from "../context/FirestoreContext";
 import { uploadFile } from "../firebase";
 import WarehouseExitModal from "./WarehouseExitModal";
+import { roundRupiah } from "../utils/profitUtils";
+import {
+  WHOLE_NUMBER_MESSAGE,
+  parseWholeNumber,
+} from "../utils/stockTransactionUtils";
 
 // Helper function for currency formatting
 function formatRupiah(value) {
@@ -424,15 +429,39 @@ const WarehouseExit = () => {
   };
 
   // Handle save from modal
+  // Stock is counted in whole numbers. Checked before anything is written, so
+  // a row that doesn't convert to one stops the whole exit (or edit).
+  const assertWholeQuantities = (validRows) => {
+    for (const row of validRows) {
+      const quantity = parseWholeNumber(row.quantity);
+      if (Number.isNaN(quantity)) {
+        throw new Error(`${row.product.name}: ${WHOLE_NUMBER_MESSAGE}`);
+      }
+      const convertedQty = convertToSmallestUnit(quantity, row.unit, {
+        base_unit: row.product.base_unit || row.product.smallestUnit,
+        bulk_unit_name: row.product.bulk_unit_name || null,
+        bulk_unit_conversion: row.product.bulk_unit_conversion || null,
+      });
+      if (!Number.isInteger(convertedQty)) {
+        throw new Error(
+          `${row.product.name}: jumlah dalam ${
+            row.product.base_unit || row.product.smallestUnit || "satuan terkecil"
+          } harus bilangan bulat`
+        );
+      }
+    }
+  };
+
   const handleSave = async (transactionData, validRows) => {
     try {
+      assertWholeQuantities(validRows);
       const documentId = generateDocumentId();
       const transactionDetailId = uuidv4(); // Create once for all transactions
 
       // Check stock availability and create stock transactions
       for (const row of validRows) {
         const product = row.product;
-        const quantity = parseFloat(row.quantity);
+        const quantity = parseWholeNumber(row.quantity);
 
         // Convert to smallest unit for stock calculation
         const convertedQty = convertToSmallestUnit(quantity, row.unit, {
@@ -445,7 +474,7 @@ const WarehouseExit = () => {
         if (!rowHargaKulakVal) {
           rowHargaKulakVal = product.cost_price || 0;
         }
-        const rowCost = quantity * rowHargaKulakVal;
+        const rowCost = roundRupiah(quantity * rowHargaKulakVal);
 
         // Create stock transaction (similar to Transaksi.js)
         const stockTransactionId = uuidv4();
@@ -474,7 +503,9 @@ const WarehouseExit = () => {
 
         // Update stock and prices (Harga Kulak & Harga Satuan) in stocks_b2b
         const newStock = product.stock - convertedQty;
-        const newStockValue = Math.max(0, newStock * (product.cost_price || 0));
+        const newStockValue = roundRupiah(
+          Math.max(0, newStock * (product.cost_price || 0))
+        );
 
         let baseUnitPriceVal = parseRupiah(row.unitPrice);
         if (row.unit === product.bulk_unit_name && product.bulk_unit_conversion) {
@@ -533,6 +564,7 @@ const WarehouseExit = () => {
   // Handle update from modal (edit mode)
   const handleUpdate = async (transactionData, validRows) => {
     try {
+      assertWholeQuantities(validRows);
       const record = editingRecord;
 
       // Fetch old stock transactions for this record
@@ -559,9 +591,10 @@ const WarehouseExit = () => {
               );
         if (productId) {
           const product = freshProductsMap[productId];
-          const restoredStock = product.stock + txn.quantity;
-          const restoredValue =
-            (product.stockValue || 0) + (txn.stockWorth || 0);
+          const restoredStock = Math.round(product.stock + txn.quantity);
+          const restoredValue = roundRupiah(
+            (product.stockValue || 0) + (txn.stockWorth || 0)
+          );
           await updateDoc("stocks_b2b", productId, {
             stock: restoredStock,
             stockValue: restoredValue,
@@ -579,7 +612,7 @@ const WarehouseExit = () => {
       for (const row of validRows) {
         const product =
           freshProductsMap[row.product.id] || row.product;
-        const quantity = parseFloat(row.quantity);
+        const quantity = parseWholeNumber(row.quantity);
 
         const convertedQty = convertToSmallestUnit(quantity, row.unit, {
           base_unit: row.product.base_unit || row.product.smallestUnit,
@@ -587,10 +620,11 @@ const WarehouseExit = () => {
           bulk_unit_conversion: row.product.bulk_unit_conversion || null,
         });
 
-        const stockWorth =
+        const stockWorth = roundRupiah(
           product.stock > 0
             ? ((product.stockValue || 0) / product.stock) * convertedQty
-            : 0;
+            : 0
+        );
 
         const stockTransactionId = uuidv4();
         await createDoc(
@@ -616,9 +650,8 @@ const WarehouseExit = () => {
         );
 
         const newStock = product.stock - convertedQty;
-        const newStockValue = Math.max(
-          0,
-          (product.stockValue || 0) - stockWorth
+        const newStockValue = roundRupiah(
+          Math.max(0, (product.stockValue || 0) - stockWorth)
         );
 
         let baseUnitPriceVal = parseRupiah(row.unitPrice);

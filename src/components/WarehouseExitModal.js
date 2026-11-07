@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import ReactDOM from "react-dom";
 import { FaTimes, FaPlus, FaTrash } from "react-icons/fa";
 import "../styles/WarehouseExitModal.css";
+import { roundRupiah } from "../utils/profitUtils";
+import {
+  WHOLE_NUMBER_MESSAGE,
+  hasDecimalSeparator,
+  keepDigits,
+  parseWholeNumber,
+} from "../utils/stockTransactionUtils";
 
 // Helper function for currency formatting
 function formatRupiah(value) {
@@ -318,14 +325,14 @@ const WarehouseExitModal = ({
             const isBulk = row.product.bulk_unit_name && newUnit === row.product.bulk_unit_name;
             const conversion = isBulk ? (row.product.bulk_unit_conversion || 1) : 1;
 
-            const unitPrice = (row.product.price || 0) * conversion;
+            const unitPrice = roundRupiah((row.product.price || 0) * conversion);
             updatedUnitPrice = formatRupiah(unitPrice.toString());
 
-            const costPrice = (row.product.cost_price || 0) * conversion;
+            const costPrice = roundRupiah((row.product.cost_price || 0) * conversion);
             updatedHargaKulak = formatRupiah(costPrice.toString());
 
             if (row.quantity && parseFloat(row.quantity) > 0) {
-              const subtotal = Math.round(parseFloat(row.quantity) * unitPrice);
+              const subtotal = roundRupiah(parseFloat(row.quantity) * unitPrice);
               updatedSubtotal = formatRupiah(subtotal.toString());
             } else {
               updatedSubtotal = "";
@@ -345,22 +352,26 @@ const WarehouseExitModal = ({
     );
   };
 
-  // Handle quantity change
+  // Handle quantity change. Quantities are whole numbers: a comma or dot is
+  // refused with a message rather than dropped, so "1,5" can't become 15.
   const handleQuantityChange = (rowId, value) => {
-    // Only allow numbers and decimal point
-    const numericValue = value.replace(/[^0-9.]/g, "");
+    const errorKey = `quantity_${rowId}`;
+    if (hasDecimalSeparator(value)) {
+      setErrors((prev) => ({ ...prev, [errorKey]: WHOLE_NUMBER_MESSAGE }));
+      return;
+    }
+    setErrors((prev) => {
+      if (!prev[errorKey]) return prev;
+      const { [errorKey]: _cleared, ...rest } = prev;
+      return rest;
+    });
 
-    // Prevent multiple decimal points
-    const parts = numericValue.split(".");
-    const cleanValue =
-      parts.length > 2
-        ? parts[0] + "." + parts.slice(1).join("")
-        : numericValue;
+    const cleanValue = keepDigits(value);
 
     const row = rows.find((r) => r.id === rowId);
     if (row && row.product && cleanValue && parseFloat(cleanValue) > 0) {
       const unitPrice = parseRupiah(row.unitPrice);
-      const subtotal = Math.round(parseFloat(cleanValue) * unitPrice);
+      const subtotal = roundRupiah(parseInt(cleanValue, 10) * unitPrice);
       const formattedSubtotal = formatRupiah(subtotal.toString());
 
       setRows((prev) =>
@@ -404,7 +415,7 @@ const WarehouseExitModal = ({
     ) {
       const quantity = parseFloat(row.quantity);
       const unitPrice = parseRupiah(formattedValue);
-      const subtotal = Math.round(quantity * unitPrice);
+      const subtotal = roundRupiah(quantity * unitPrice);
 
       setRows((prev) =>
         prev.map((r) =>
@@ -512,7 +523,12 @@ const WarehouseExitModal = ({
       if (!row.product) {
         newErrors[`product_${row.id}`] = "Produk harus dipilih";
       }
-      if (!row.quantity || row.quantity === "0") {
+      if (!row.quantity) {
+        newErrors[`quantity_${row.id}`] = "Jumlah harus diisi";
+      } else if (Number.isNaN(parseWholeNumber(row.quantity))) {
+        // Also catches a decimal quantity left in a saved draft or an old exit
+        newErrors[`quantity_${row.id}`] = WHOLE_NUMBER_MESSAGE;
+      } else if (parseWholeNumber(row.quantity) === 0) {
         newErrors[`quantity_${row.id}`] = "Jumlah harus diisi";
       }
     });
@@ -536,7 +552,7 @@ const WarehouseExitModal = ({
       if (!isEditMode) {
         const stockChecks = [];
         for (const row of validRows) {
-          const quantity = parseFloat(row.quantity);
+          const quantity = parseWholeNumber(row.quantity);
           const availableStock = row.product.stock || 0;
 
           if (availableStock < quantity) {
@@ -569,7 +585,7 @@ const WarehouseExitModal = ({
         items: validRows.map((row) => ({
           itemId: row.product.itemId || row.product.id,
           itemName: row.product.name,
-          quantity: parseFloat(row.quantity),
+          quantity: parseWholeNumber(row.quantity),
           unit: row.unit,
           hargaKulak: parseRupiah(row.hargaKulak),
           unitPrice: parseRupiah(row.unitPrice),
@@ -832,7 +848,8 @@ const WarehouseExitModal = ({
                       <input
                         type="text"
                         className="warehouse-exit-input"
-                        placeholder="Jumlah (mis: 1.5)"
+                        inputMode="numeric"
+                        placeholder="Jumlah"
                         value={row.quantity}
                         onChange={(e) =>
                           handleQuantityChange(row.id, e.target.value)

@@ -19,6 +19,8 @@ import { useEnvironment } from "../context/EnvironmentContext";
 import { generateIncrementalId } from "../services/transactionHistoryService";
 import {
   STOCK_CORRECTION_VIA,
+  WHOLE_NUMBER_MESSAGE,
+  parseWholeNumber,
   planStockCorrection,
   summarizeMonthlyStock,
 } from "../utils/stockTransactionUtils";
@@ -1078,10 +1080,10 @@ export default function Stocks() {
       const prod = products[selectedProductId];
 
       try {
-        // Parse the numeric value from the formatted input
-        const rawAmount = parseFloat(tempAmount.replace(/\D/g, ""));
+        // Stock is counted in whole numbers; "0,5" is refused, not read as 5
+        const rawAmount = parseWholeNumber(tempAmount);
         if (isNaN(rawAmount)) {
-          throw new Error("Invalid amount");
+          throw new Error(WHOLE_NUMBER_MESSAGE);
         }
 
         // Convert to smallest unit
@@ -1090,6 +1092,11 @@ export default function Stocks() {
           tempSatuan,
           prod
         );
+        if (!Number.isInteger(quantityInSmallestUnit)) {
+          throw new Error(
+            `Jumlah dalam ${prod.smallestUnit || "satuan terkecil"} harus bilangan bulat`
+          );
+        }
 
         const txDoc = {
           ...createBaseTransactionDoc(prod),
@@ -1144,8 +1151,11 @@ export default function Stocks() {
       }
 
       try {
-        // Parse original values before conversion
-        const originalQuantity = parseRupiah(tempAmount);
+        // Stock is counted in whole numbers; "0,5" is refused, not read as 5
+        const originalQuantity = parseWholeNumber(tempAmount);
+        if (isNaN(originalQuantity)) {
+          throw new Error(WHOLE_NUMBER_MESSAGE);
+        }
         const originalUnit = tempSatuan;
 
         // Convert to smallest unit
@@ -1154,6 +1164,11 @@ export default function Stocks() {
           originalUnit,
           prod
         );
+        if (!Number.isInteger(newStock)) {
+          throw new Error(
+            `Jumlah dalam ${prod.smallestUnit || "satuan terkecil"} harus bilangan bulat`
+          );
+        }
 
         // Tetapkan fixes a miscounted quantity. It is not a purchase or a
         // loss, so no money is recorded; the stored value just follows the

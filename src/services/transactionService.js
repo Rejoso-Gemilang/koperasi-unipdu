@@ -1,6 +1,6 @@
 // src/services/transactionService.js
 import { convertToSmallestUnit, CONVERSION_TABLE } from '../utils/transaksiUtils';
-import { getUnitCost, toFiniteNumber } from '../utils/profitUtils';
+import { getUnitCost, roundRupiah, toFiniteNumber } from '../utils/profitUtils';
 import { printReceipt as printerServicePrint } from './PrinterService';
 
 export const processTransaction = async (
@@ -145,10 +145,14 @@ export const processTransaction = async (
         timestampInMillisEpoch: serverTimestamp(),
         transactionType: "penjualan",
         transactionVia: "pointOfSales",
-        costPrice: stockWorthPerUnit,
-        stockWorth: isDiscrepant ? 
-          (stockWorthPerUnit * actualStockReduction) :
-          transactionStockWorth,
+        costPrice: roundRupiah(stockWorthPerUnit),
+        // Whole-rupiah cost of every unit sold, exact where costPrice is not
+        lineCost: roundRupiah(stockWorthPerUnit * convertedQty),
+        stockWorth: roundRupiah(
+          isDiscrepant
+            ? stockWorthPerUnit * actualStockReduction // Only count worth of actual stock used
+            : transactionStockWorth
+        ),
         isStockDiscrepant: isDiscrepant,
         createdBy: currentUser ? currentUser.email : "unknown"
       });
@@ -156,7 +160,9 @@ export const processTransaction = async (
       // Update stock, ensuring it doesn't go negative
       const newStock = isDiscrepant ? 0 : (currentStock - convertedQty);
       const stockReduction = isDiscrepant ? currentStock : convertedQty;
-      const newStockValue = Math.max(0, stockValue - (stockWorthPerUnit * stockReduction));
+      const newStockValue = roundRupiah(
+        Math.max(0, stockValue - stockWorthPerUnit * stockReduction)
+      );
       
       await updateDoc("stocks", product.id, {
         stock: newStock,

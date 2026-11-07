@@ -296,7 +296,8 @@ const NotaBelanjaB2B = () => {
 
         if (productId) {
           const product = freshProductsMap[productId];
-          const restoredStock = product.stock - txn.quantity;
+          // Purchases saved before quantities were whole can carry a decimal part
+          const restoredStock = Math.round(product.stock - txn.quantity);
           const restoredValue = (product.stockValue || 0) - (txn.cost || 0);
 
           await updateDoc("stocks_b2b", productId, {

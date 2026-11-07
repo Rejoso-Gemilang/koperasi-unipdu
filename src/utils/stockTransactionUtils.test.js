@@ -2,6 +2,9 @@ import {
   STOCK_CORRECTION_VIA,
   getTransactionCost,
   isStockCorrection,
+  hasDecimalSeparator,
+  keepDigits,
+  parseWholeNumber,
   planStockCorrection,
   summarizeMonthlyStock,
   withoutCorrectionCost,
@@ -111,5 +114,40 @@ describe("summarizeMonthlyStock", () => {
     const empty = { monthlyPurchase: 0, monthlySales: 0, missingStock: 0 };
     expect(summarizeMonthlyStock([], FIRST, LAST)).toEqual(empty);
     expect(summarizeMonthlyStock(undefined, FIRST, LAST)).toEqual(empty);
+  });
+});
+
+describe("whole-number stock quantities", () => {
+  test.each([
+    ["5", 5],
+    ["0", 0],
+    ["007", 7],
+    [" 12 ", 12],
+  ])("reads %p as %p", (typed, expected) => {
+    expect(parseWholeNumber(typed)).toBe(expected);
+  });
+
+  test.each(["", ",", ".", "0,5", "0.5", "2,", "1.500", "-4", "abc", null, undefined])(
+    "does not accept %p",
+    (typed) => {
+      expect(parseWholeNumber(typed)).toBeNaN();
+    }
+  );
+
+  test.each([
+    ["0,5", true],
+    ["0.5", true],
+    ["1.500", true],
+    ["15", false],
+    ["", false],
+    [null, false],
+  ])("a decimal separator in %p is %p", (typed, found) => {
+    expect(hasDecimalSeparator(typed)).toBe(found);
+  });
+
+  test("keeps only the digits", () => {
+    expect(keepDigits("1a2b")).toBe("12");
+    expect(keepDigits("-4")).toBe("4");
+    expect(keepDigits(null)).toBe("");
   });
 });

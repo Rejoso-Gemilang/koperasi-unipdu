@@ -13,7 +13,7 @@ import {
 import { getEnvironmentCollection, getEnvironmentDoc } from "../firebase";
 import { getVoucherFaceValue } from "../utils/voucherBalance";
 import { convertToSmallestUnit } from "../utils/transaksiUtils";
-import { getUnitCost, toFiniteNumber } from "../utils/profitUtils";
+import { getUnitCost, roundRupiah, toFiniteNumber } from "../utils/profitUtils";
 import { getLocalDateKey } from "../utils/cashflowUtils";
 import { cashflowService } from "./cashflowService";
 
@@ -115,8 +115,9 @@ export const deleteAndRevertTransaction = async ({
           toFiniteNumber(currentStockData.stockValue) ?? 0
         );
 
-        const newQty = currentQty + info.quantity;
-        const newVal = currentVal + info.stockWorth;
+        // Sales saved before quantities were whole can carry a decimal part
+        const newQty = Math.round(currentQty + info.quantity);
+        const newVal = roundRupiah(currentVal + info.stockWorth);
 
         await updateDoc(stockDocRef, {
           stock: newQty,
@@ -156,7 +157,7 @@ export const deleteAndRevertTransaction = async ({
           stockData
         );
         const unitCost = getUnitCost(stockData);
-        const itemStockWorth = unitCost * convertedQty;
+        const itemStockWorth = roundRupiah(unitCost * convertedQty);
 
         const currentQty = toFiniteNumber(stockData.stock) ?? 0;
         const currentVal = Math.max(
@@ -164,8 +165,8 @@ export const deleteAndRevertTransaction = async ({
           toFiniteNumber(stockData.stockValue) ?? 0
         );
 
-        const newQty = currentQty + convertedQty;
-        const newVal = currentVal + itemStockWorth;
+        const newQty = Math.round(currentQty + convertedQty);
+        const newVal = roundRupiah(currentVal + itemStockWorth);
 
         await updateDoc(stockDocRef, {
           stock: newQty,

@@ -15,9 +15,16 @@ import {
   formatCurrency,
   getInitialQuantity,
   getIncrement,
+  getPriceAndSubtotal,
   CONVERSION_TABLE,
 } from "../utils/transaksiUtils";
-import { getUnitCost, toFiniteNumber } from "../utils/profitUtils";
+import { getUnitCost, roundRupiah, toFiniteNumber } from "../utils/profitUtils";
+import {
+  WHOLE_NUMBER_MESSAGE,
+  hasDecimalSeparator,
+  keepDigits,
+  parseWholeNumber,
+} from "../utils/stockTransactionUtils";
 
 // Utility function to set local print server URL (can be called from settings)
 export const setLocalPrintServer = (url = "http://localhost:9001") => {
@@ -398,37 +405,22 @@ const Transaksi = () => {
     }
   };
 
-  const getDynamicPriceAndSubtotal = (productId, qty, selectedUnit) => {
-    const product = productData[productId];
-    if (!product) {
-      return { price: 0, subtotal: 0 };
-    }
+  const getDynamicPriceAndSubtotal = (productId, qty, selectedUnit) =>
+    getPriceAndSubtotal(productData[productId], qty, selectedUnit);
 
-    const baseUnit = product.base_unit || product.smallestUnit || "pcs";
-    const bulkUnit = product.bulk_unit_name || "";
-    const conversion = product.bulk_unit_conversion || product.piecesPerBox || 1;
+  // Quantities are whole numbers. A comma or dot is refused with a message
+  // rather than dropped, so "0,5" can't turn into 5 at the till.
+  const refuseDecimalQuantity = () =>
+    setSnackbars((prev) => [
+      ...prev,
+      { id: Date.now(), message: WHOLE_NUMBER_MESSAGE, severity: "warning" },
+    ]);
 
-    const bulkPrice = bulkUnit ? (product.pricePerUnit?.[bulkUnit] || 0) : 0;
-
-    if (
-      selectedUnit === baseUnit &&
-      bulkUnit &&
-      bulkPrice > 0 &&
-      conversion > 1 &&
-      qty >= conversion
-    ) {
-      const proRatedPrice = bulkPrice / conversion;
-      return {
-        price: proRatedPrice,
-        subtotal: qty * proRatedPrice
-      };
-    }
-
-    const standardPrice = product.pricePerUnit?.[selectedUnit] || 0;
-    return {
-      price: standardPrice,
-      subtotal: standardPrice * qty
-    };
+  // The quantity of a cart line as the cashier sees it: what is typed in the
+  // box if that is a whole number, otherwise the line's own quantity.
+  const getCartQuantity = (product) => {
+    const typed = parseWholeNumber(quantityInputs[product.id]);
+    return Number.isNaN(typed) ? product.quantity : typed;
   };
 
   const addProductToCart = (id, satuan, quantity) => {
@@ -468,10 +460,7 @@ const Transaksi = () => {
         const increment = getBarcodeIncrement(satuan);
 
         // Check if there's a manually entered quantity in quantityInputs
-        const displayedQuantity =
-          quantityInputs[existingProduct.id] !== undefined
-            ? parseFloat(quantityInputs[existingProduct.id].replace(",", "."))
-            : existingProduct.quantity;
+        const displayedQuantity = getCartQuantity(existingProduct);
 
         // Use the displayed quantity for increment
         const newQuantity = displayedQuantity + increment;
@@ -492,10 +481,12 @@ const Transaksi = () => {
         );
         const totalConverted = existingConverted + convertedQty;
 
-        updateQuantity(
-          id,
-          convertFromSmallestUnit(totalConverted, satuan, product)
-        );
+        const newQuantity = convertFromSmallestUnit(totalConverted, satuan, product);
+        if (!Number.isInteger(newQuantity)) {
+          refuseDecimalQuantity();
+          return;
+        }
+        updateQuantity(id, newQuantity);
       }
     } else {
       // If the product is not already in the cart, add it as a new entry.
@@ -648,6 +639,14 @@ const Transaksi = () => {
           stockData
         );
 
+        // Stock is counted in whole numbers; nothing has been saved yet, so a
+        // line that doesn't convert to one stops the whole sale here.
+        if (!Number.isInteger(convertedQty)) {
+          throw new Error(
+            `${product.name}: jumlah dalam ${stockData.smallestUnit || "satuan terkecil"} harus bilangan bulat`
+          );
+        }
+
         // Check if there's a stock discrepancy
         if (currentStock < convertedQty) {
           hasStockDiscrepancy = true;
@@ -791,10 +790,14 @@ const Transaksi = () => {
           timestampInMillisEpoch: serverTimestamp(),
           transactionType: "penjualan",
           transactionVia: "pointOfSales",
-          costPrice: stockWorthPerUnit,
-          stockWorth: isDiscrepant
-            ? stockWorthPerUnit * actualStockReduction // Only count worth of actual stock used
-            : transactionStockWorth,
+          costPrice: roundRupiah(stockWorthPerUnit),
+          // Whole-rupiah cost of every unit sold, exact where costPrice is not
+          lineCost: roundRupiah(stockWorthPerUnit * convertedQty),
+          stockWorth: roundRupiah(
+            isDiscrepant
+              ? stockWorthPerUnit * actualStockReduction // Only count worth of actual stock used
+              : transactionStockWorth
+          ),
           isStockDiscrepant: isDiscrepant,
           createdBy: currentUser ? currentUser.email : "unknown",
           userId: memberData?.id || null,
@@ -807,9 +810,8 @@ const Transaksi = () => {
         // Update stock, ensuring it doesn't go negative
         const newStock = isDiscrepant ? 0 : currentStock - convertedQty;
         const stockReduction = isDiscrepant ? currentStock : convertedQty;
-        const newStockValue = Math.max(
-          0,
-          stockValue - stockWorthPerUnit * stockReduction
+        const newStockValue = roundRupiah(
+          Math.max(0, stockValue - stockWorthPerUnit * stockReduction)
         );
 
         await updateDoc("stocks", product.id, {
@@ -1128,15 +1130,7 @@ const Transaksi = () => {
                   <button
                     className="quantity-btn"
                     onClick={() => {
-                      // Get the displayed quantity from input or actual product quantity
-                      const currentQuantity =
-                        quantityInputs[product.id] !== undefined
-                          ? parseFloat(
-                              quantityInputs[product.id].replace(",", ".")
-                            )
-                          : product.quantity;
-
-                      const newQuantity = Math.max(0, currentQuantity - 1);
+                      const newQuantity = Math.max(0, getCartQuantity(product) - 1);
                       updateQuantity(product.id, newQuantity);
                       setQuantityInputs((prev) => ({
                         ...prev,
@@ -1149,7 +1143,7 @@ const Transaksi = () => {
                   <input
                     type="text"
                     className="quantity-input"
-                    inputMode="decimal"
+                    inputMode="numeric"
                     value={
                       quantityInputs[product.id] !== undefined
                         ? quantityInputs[product.id]
@@ -1157,23 +1151,19 @@ const Transaksi = () => {
                     }
                     onChange={(e) => {
                       const rawValue = e.target.value;
-                      // Allow empty input or valid decimal numbers (dot or comma)
-                      if (
-                        rawValue === "" ||
-                        /^(\d+([.,]\d*)?)?$/.test(rawValue)
-                      ) {
-                        setQuantityInputs((prev) => ({
-                          ...prev,
-                          [product.id]: rawValue,
-                        }));
+                      if (hasDecimalSeparator(rawValue)) {
+                        // Refused, not dropped: "0,5" must not become 5
+                        refuseDecimalQuantity();
+                        return;
                       }
+                      setQuantityInputs((prev) => ({
+                        ...prev,
+                        [product.id]: keepDigits(rawValue),
+                      }));
                     }}
                     onBlur={(e) => {
                       const rawValue = e.target.value.trim();
-                      // Replace comma with dot to parse correctly
-                      const numericValue = parseFloat(
-                        rawValue.replace(",", ".")
-                      );
+                      const numericValue = parseWholeNumber(rawValue);
                       if (
                         rawValue === "" ||
                         isNaN(numericValue) ||
@@ -1194,15 +1184,7 @@ const Transaksi = () => {
                   <button
                     className="quantity-btn"
                     onClick={() => {
-                      // Get the displayed quantity from input or actual product quantity
-                      const currentQuantity =
-                        quantityInputs[product.id] !== undefined
-                          ? parseFloat(
-                              quantityInputs[product.id].replace(",", ".")
-                            )
-                          : product.quantity;
-
-                      const newQuantity = currentQuantity + 1;
+                      const newQuantity = getCartQuantity(product) + 1;
                       updateQuantity(product.id, newQuantity);
                       setQuantityInputs((prev) => ({
                         ...prev,

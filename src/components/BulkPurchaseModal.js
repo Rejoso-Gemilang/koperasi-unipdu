@@ -4,6 +4,13 @@ import { FaTimes, FaPlus, FaTrash, FaUpload, FaFileAlt } from "react-icons/fa";
 import { uploadFile } from "../firebase";
 import "../styles/BulkPurchaseModal.css";
 import { convertToSmallestUnit } from "../utils/transaksiUtils";
+import { roundRupiah } from "../utils/profitUtils";
+import {
+  WHOLE_NUMBER_MESSAGE,
+  hasDecimalSeparator,
+  keepDigits,
+  parseWholeNumber,
+} from "../utils/stockTransactionUtils";
 import { useFirestore } from "../context/FirestoreContext";
 import { generateIncrementalId } from "../services/transactionHistoryService";
 import { ACCOUNTS, ACCOUNT_LABELS, fmtAmount, normalizeAccount } from "../utils/cashflowUtils";
@@ -242,24 +249,24 @@ const BulkPurchaseModal = ({
             if (value === baseUnit && row.unit === bulkUnitName) {
               // Bulk -> Base: Multiply Qty, Divide Cost
               newQty = currentQty > 0 ? (currentQty * conversion).toString() : "";
-              newCost = currentCost > 0 ? formatRupiah(Math.round(currentCost / conversion).toString()) : "";
+              newCost = currentCost > 0 ? formatRupiah(roundRupiah(currentCost / conversion).toString()) : "";
             } else if (value === bulkUnitName && row.unit === baseUnit) {
               // Base -> Bulk: Floor/Truncate Qty, Multiply Cost
               newQty = currentQty > 0 ? Math.floor(currentQty / conversion).toString() : "";
-              newCost = currentCost > 0 ? formatRupiah(Math.round(currentCost * conversion).toString()) : "";
+              newCost = currentCost > 0 ? formatRupiah(roundRupiah(currentCost * conversion).toString()) : "";
             }
           }
 
           const q = parseFloat(newQty) || 0;
           const c = parseRupiah(newCost) || 0;
-          const newSubtotal = q * c;
+          const newSubtotal = roundRupiah(q * c);
 
           return {
             ...row,
             unit: value,
             quantity: newQty,
             hargaSatuan: newCost,
-            subtotal: newSubtotal > 0 ? formatRupiah(Math.round(newSubtotal).toString()) : "",
+            subtotal: newSubtotal > 0 ? formatRupiah(newSubtotal.toString()) : "",
           };
         }
         return row;
@@ -267,17 +274,21 @@ const BulkPurchaseModal = ({
     );
   };
 
-  // Handle quantity change
+  // Handle quantity change. Quantities are whole numbers: a comma or dot is
+  // refused with a message rather than dropped, so "1,5" can't become 15.
   const handleQuantityChange = (rowId, value) => {
-    // Only allow numbers and decimal point
-    const numericValue = value.replace(/[^0-9.]/g, "");
+    const errorKey = `quantity_${rowId}`;
+    if (hasDecimalSeparator(value)) {
+      setErrors((prev) => ({ ...prev, [errorKey]: WHOLE_NUMBER_MESSAGE }));
+      return;
+    }
+    setErrors((prev) => {
+      if (!prev[errorKey]) return prev;
+      const { [errorKey]: _cleared, ...rest } = prev;
+      return rest;
+    });
 
-    // Prevent multiple decimal points
-    const parts = numericValue.split(".");
-    const cleanValue =
-      parts.length > 2
-        ? parts[0] + "." + parts.slice(1).join("")
-        : numericValue;
+    const cleanValue = keepDigits(value);
 
     setRows((prev) =>
       prev.map((row) =>
@@ -287,13 +298,13 @@ const BulkPurchaseModal = ({
 
     // Auto-calculate based on existing harga satuan or subtotal
     const row = rows.find((r) => r.id === rowId);
-    if (row && cleanValue && parseFloat(cleanValue) > 0) {
-      const quantity = parseFloat(cleanValue);
+    if (row && cleanValue && parseInt(cleanValue, 10) > 0) {
+      const quantity = parseInt(cleanValue, 10);
 
       // If harga satuan exists, calculate subtotal
       if (row.hargaSatuan && parseRupiah(row.hargaSatuan) > 0) {
         const hargaSatuan = parseRupiah(row.hargaSatuan);
-        const newSubtotal = quantity * hargaSatuan;
+        const newSubtotal = roundRupiah(quantity * hargaSatuan);
         setRows((prev) =>
           prev.map((r) =>
             r.id === rowId
@@ -309,7 +320,7 @@ const BulkPurchaseModal = ({
       // If subtotal exists but no harga satuan, calculate harga satuan
       else if (row.subtotal && parseRupiah(row.subtotal) > 0) {
         const subtotal = parseRupiah(row.subtotal);
-        const newHargaSatuan = Math.round(subtotal / quantity);
+        const newHargaSatuan = roundRupiah(subtotal / quantity);
         setRows((prev) =>
           prev.map((r) =>
             r.id === rowId
@@ -344,7 +355,7 @@ const BulkPurchaseModal = ({
     ) {
       const quantity = parseFloat(row.quantity);
       const hargaSatuan = parseRupiah(formattedValue);
-      const newSubtotal = quantity * hargaSatuan;
+      const newSubtotal = roundRupiah(quantity * hargaSatuan);
 
       setRows((prev) =>
         prev.map((r) =>
@@ -379,7 +390,7 @@ const BulkPurchaseModal = ({
     ) {
       const quantity = parseFloat(row.quantity);
       const subtotal = parseRupiah(formattedValue);
-      const newHargaSatuan = Math.round(subtotal / quantity);
+      const newHargaSatuan = roundRupiah(subtotal / quantity);
 
       setRows((prev) =>
         prev.map((r) =>
@@ -507,8 +518,27 @@ const BulkPurchaseModal = ({
       if (!row.product) {
         newErrors[`product_${row.id}`] = "Produk harus dipilih";
       }
-      if (!row.quantity || parseFloat(row.quantity) === 0) {
+      if (!row.quantity) {
         newErrors[`quantity_${row.id}`] = "Jumlah harus diisi";
+      } else if (Number.isNaN(parseWholeNumber(row.quantity))) {
+        // Also catches a decimal quantity left in a saved draft or an old purchase
+        newErrors[`quantity_${row.id}`] = WHOLE_NUMBER_MESSAGE;
+      } else if (parseWholeNumber(row.quantity) === 0) {
+        newErrors[`quantity_${row.id}`] = "Jumlah harus diisi";
+      } else if (row.product && row.unit) {
+        let smallestUnitQuantity;
+        try {
+          smallestUnitQuantity = convertToSmallestUnit(
+            parseWholeNumber(row.quantity),
+            row.unit,
+            row.product
+          );
+        } catch (e) {
+          smallestUnitQuantity = null;
+        }
+        if (smallestUnitQuantity !== null && !Number.isInteger(smallestUnitQuantity)) {
+          newErrors[`quantity_${row.id}`] = WHOLE_NUMBER_MESSAGE;
+        }
       }
       if (!row.hargaSatuan || parseRupiah(row.hargaSatuan) === 0) {
         newErrors[`hargaSatuan_${row.id}`] = "Harga satuan harus diisi";
@@ -528,7 +558,7 @@ const BulkPurchaseModal = ({
       itemId: row.product.itemId || row.product.id,
       itemName: row.product.name,
       price: parseRupiah(row.hargaSatuan),
-      quantity: parseFloat(row.quantity),
+      quantity: parseWholeNumber(row.quantity),
       subtotal: parseRupiah(row.subtotal),
       unit: row.unit,
     }));
@@ -571,7 +601,7 @@ const BulkPurchaseModal = ({
         );
 
         for (const row of validRows) {
-          const quantity = parseFloat(row.quantity);
+          const quantity = parseWholeNumber(row.quantity);
           const subtotal = parseRupiah(row.subtotal);
           const quantityInSmallestUnit = convertToSmallestUnit(quantity, row.unit, row.product);
 
@@ -604,7 +634,7 @@ const BulkPurchaseModal = ({
             id: row.product.id,
             stock: newStock,
             stockValue: newStockValue,
-            lastPurchasePrice: Math.round(subtotal / quantityInSmallestUnit),
+            lastPurchasePrice: roundRupiah(subtotal / quantityInSmallestUnit),
           });
         }
 
@@ -1200,7 +1230,8 @@ const BulkPurchaseModal = ({
                       <input
                         type="text"
                         className="bulk-input"
-                        placeholder="Jumlah (mis: 1.5)"
+                        inputMode="numeric"
+                        placeholder="Jumlah"
                         value={row.quantity}
                         onChange={(e) =>
                           handleQuantityChange(row.id, e.target.value)

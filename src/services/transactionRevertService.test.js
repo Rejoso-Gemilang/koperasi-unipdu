@@ -103,6 +103,48 @@ describe("transactionRevertService", () => {
       ).rejects.toThrow("Transaksi tidak ditemukan");
     });
 
+    test("restores a stock value that was saved with a decimal part as whole rupiah", async () => {
+      getDoc.mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({
+          id: "tx-002",
+          total: 5000,
+          paymentMethod: "cash",
+          timestamp: { toDate: () => new Date("2026-10-05T09:50:00Z") },
+        }),
+      });
+      getDocs.mockResolvedValueOnce({
+        empty: false,
+        docs: [
+          {
+            id: "stx-2",
+            data: () => ({
+              itemId: "item-2",
+              itemName: "Gula",
+              quantity: 1,
+              stockWorth: 3333.33,
+              unit: "pcs",
+            }),
+          },
+        ],
+      });
+      getDoc.mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ stock: 2, stockValue: 6666.5 }),
+      });
+
+      await deleteAndRevertTransaction({
+        transactionId: "tx-002",
+        currentUser: { email: "kasir@unipdu.ac.id" },
+        userRole: "Cashier",
+      });
+
+      expect(updateDoc).toHaveBeenCalledWith(
+        expect.objectContaining({ collection: "stocks", id: "item-2" }),
+        expect.objectContaining({ stock: 3, stockValue: 10000 })
+      );
+    });
+
     test("restores stocks and removes stockTransactions for Cashier", async () => {
       const mockTx = {
         id: "tx-001",

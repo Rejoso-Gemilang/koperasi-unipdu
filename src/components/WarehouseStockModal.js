@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import "../styles/StockModal.css";
+import {
+  WHOLE_NUMBER_MESSAGE,
+  hasDecimalSeparator,
+  keepDigits,
+  parseWholeNumber,
+} from "../utils/stockTransactionUtils";
 
 // Helper functions for Rupiah currency formatting
 function formatRupiah(value) {
@@ -198,6 +204,8 @@ function WarehouseStockModal({
     if (type === "tambah" || type === "tetapkan") {
       if (localState.tempAmount === "" || localState.tempAmount == null) {
         errors.tempAmount = "Jumlah wajib diisi";
+      } else if (Number.isNaN(parseWholeNumber(localState.tempAmount))) {
+        errors.tempAmount = WHOLE_NUMBER_MESSAGE;
       }
       if (!localState.tempSatuan) {
         errors.tempSatuan = "Satuan wajib dipilih";
@@ -233,11 +241,18 @@ function WarehouseStockModal({
   }, [dialogOpen, onClose]);
 
   // Handlers for inputs
+  // Stock is counted in whole numbers. A comma or dot is refused with a
+  // message rather than dropped, so "0,5" can't turn into 5 unnoticed.
   function handleAmountChange(e) {
-    const numericValue = e.target.value.replace(/\D/g, "");
+    const typed = e.target.value;
+    if (hasDecimalSeparator(typed)) {
+      setFormErrors((prev) => ({ ...prev, tempAmount: WHOLE_NUMBER_MESSAGE }));
+      return;
+    }
+    setFormErrors((prev) => ({ ...prev, tempAmount: undefined }));
     setLocalState((prev) => ({
       ...prev,
-      tempAmount: numericValue,
+      tempAmount: keepDigits(typed),
     }));
   }
 
@@ -597,6 +612,7 @@ function WarehouseStockModal({
                 <input
                   ref={firstFieldRef}
                   type="text"
+                  inputMode="numeric"
                   value={localState.tempAmount}
                   onChange={handleAmountChange}
                   className={`quantity-input ${formErrors.tempAmount ? "error" : ""}`}
@@ -683,6 +699,7 @@ function WarehouseStockModal({
                 <input
                   ref={firstFieldRef}
                   type="text"
+                  inputMode="numeric"
                   value={localState.tempAmount}
                   onChange={handleAmountChange}
                   className={`quantity-input ${formErrors.tempAmount ? "error" : ""}`}

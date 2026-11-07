@@ -103,6 +103,41 @@ export const formatNumber = (number) => {
   return val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 };
 
+// Price and subtotal for a quantity of a product in the unit it is sold by.
+// Selling the base unit at or above a full bulk unit uses the bulk price
+// spread over the bulk unit; otherwise the unit's own price applies. A
+// subtotal is rounded once, from the exact amount, to the nearest rupiah, and
+// the unit price shown with it is rounded too, so no decimals are saved.
+export const getPriceAndSubtotal = (product, quantity, selectedUnit) => {
+  if (!product) {
+    return { price: 0, subtotal: 0 };
+  }
+
+  const baseUnit = product.base_unit || product.smallestUnit || "pcs";
+  const bulkUnit = product.bulk_unit_name || "";
+  const conversion = product.bulk_unit_conversion || product.piecesPerBox || 1;
+  const bulkPrice = bulkUnit ? product.pricePerUnit?.[bulkUnit] || 0 : 0;
+
+  if (
+    selectedUnit === baseUnit &&
+    bulkUnit &&
+    bulkPrice > 0 &&
+    conversion > 1 &&
+    quantity >= conversion
+  ) {
+    return {
+      price: Math.round(bulkPrice / conversion),
+      subtotal: Math.round((quantity * bulkPrice) / conversion),
+    };
+  }
+
+  const standardPrice = product.pricePerUnit?.[selectedUnit] || 0;
+  return {
+    price: Math.round(standardPrice),
+    subtotal: Math.round(standardPrice * quantity),
+  };
+};
+
 export const getInitialQuantity = (satuan) => {
   switch (satuan.toLowerCase()) {
     case "liter":
@@ -117,11 +152,9 @@ export const getInitialQuantity = (satuan) => {
   }
 };
 
+// Quantities are whole numbers, so every step is a whole number too.
 export const getIncrement = (satuan) => {
   switch (satuan.toLowerCase()) {
-    case "kg":
-    case "liter":
-      return 0.5;
     case "gram":
       return 100;
     default:

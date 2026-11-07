@@ -2,7 +2,29 @@ import {
   calculateSaleProfit,
   getSaleCost,
   getUnitCost,
+  roundRupiah,
 } from "./profitUtils";
+
+describe("roundRupiah", () => {
+  test.each([
+    [3333.33, 3333],
+    [6666.67, 6667],
+    [10.5, 11],
+    [10.49, 10],
+    [7, 7],
+    [-0.4, 0],
+    ["8332.5", 8333],
+  ])("rounds %p to the nearest whole rupiah, %p", (value, expected) => {
+    expect(roundRupiah(value)).toBe(expected);
+  });
+
+  test.each([null, undefined, "", "abc", NaN, Infinity])(
+    "turns %p into 0",
+    (value) => {
+      expect(roundRupiah(value)).toBe(0);
+    }
+  );
+});
 
 describe("profit calculations", () => {
   test("falls back to the displayed purchase price when stock is empty", () => {
@@ -83,3 +105,30 @@ describe("profit calculations", () => {
     }
   );
 });
+
+describe("lineCost", () => {
+  test("is the cost of the line, whatever the rounded unit cost times the quantity says", () => {
+    // 500 g at 16.5 per gram: costPrice is saved as 17, which would say 8500
+    const sale = { quantity: 500, costPrice: 17, lineCost: 8250 };
+
+    expect(getSaleCost(sale, {}, 500)).toBe(8250);
+  });
+
+  test("is used even when the stock record was short and stockWorth is 0", () => {
+    expect(
+      getSaleCost({ quantity: 7, costPrice: 7033, lineCost: 49231, stockWorth: 0 }, {}, 7)
+    ).toBe(49231);
+  });
+
+  test("a sale saved before lineCost existed is costed as before", () => {
+    expect(getSaleCost({ quantity: 7, costPrice: 7032, stockWorth: 0 }, {}, 7)).toBe(49224);
+  });
+
+  test.each([null, undefined, Number.NaN, -1])(
+    "an unusable lineCost (%s) falls back to the unit cost",
+    (lineCost) => {
+      expect(getSaleCost({ quantity: 2, costPrice: 1000, lineCost }, {}, 2)).toBe(2000);
+    }
+  );
+});
+

@@ -64,4 +64,72 @@ describe("StockModal", () => {
 
     expect(screen.getByText("Total Harga Kulak (Rp)")).toBeInTheDocument();
   });
+
+  test.each(["tambah", "tetapkan"])(
+    "%s refuses a decimal quantity and says why",
+    (dialogType) => {
+      renderModal(dialogType, { tempAmount: "0" });
+      const input = screen.getByPlaceholderText("Jumlah");
+
+      // The comma is refused instead of being dropped (which would make "0,5" into 5)
+      fireEvent.change(input, { target: { value: "0," } });
+      expect(input).toHaveValue("0");
+      expect(
+        screen.getByText("Jumlah harus bilangan bulat (tanpa desimal)")
+      ).toBeInTheDocument();
+
+      fireEvent.change(input, { target: { value: "0.5" } });
+      expect(input).toHaveValue("0");
+    }
+  );
+
+  test("a pasted quantity with a decimal part is refused as a whole", () => {
+    renderModal("tambah", { tempAmount: "7" });
+    const input = screen.getByPlaceholderText("Jumlah");
+
+    fireEvent.change(input, { target: { value: "1.500" } });
+
+    expect(input).toHaveValue("7");
+  });
+
+  test("the message goes away once a whole number is typed", () => {
+    renderModal("tambah", { tempAmount: "0" });
+    const input = screen.getByPlaceholderText("Jumlah");
+
+    fireEvent.change(input, { target: { value: "0," } });
+    fireEvent.change(input, { target: { value: "5" } });
+
+    expect(input).toHaveValue("5");
+    expect(
+      screen.queryByText("Jumlah harus bilangan bulat (tanpa desimal)")
+    ).not.toBeInTheDocument();
+  });
+
+  test("the quantity field drops letters", () => {
+    renderModal("tambah");
+    const input = screen.getByPlaceholderText("Jumlah");
+
+    fireEvent.change(input, { target: { value: "1a2" } });
+
+    expect(input).toHaveValue("12");
+  });
+
+  test("a decimal quantity left over from a saved form cannot be saved", () => {
+    const { onSave } = renderModal("tambah", { tempAmount: "2,5" });
+
+    fireEvent.click(screen.getByText("Simpan"));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Jumlah harus bilangan bulat (tanpa desimal)")
+    ).toBeInTheDocument();
+  });
+
+  test("a whole quantity can be saved", () => {
+    const { onSave } = renderModal("tambah", { tempAmount: "5" });
+
+    fireEvent.click(screen.getByText("Simpan"));
+
+    expect(onSave).toHaveBeenCalledWith("tambah");
+  });
 });
