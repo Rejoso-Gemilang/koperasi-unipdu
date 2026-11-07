@@ -35,6 +35,10 @@ const createStockLookup = (stocks) =>
     return lookup;
   }, {});
 
+// A loss is shown, in red, rather than hidden, so the line causing a negative
+// day total can be found.
+const lossClass = (amount) => (Math.round(amount) < 0 ? " st-loss" : "");
+
 const SejarahTransaksi = () => {
   const { queryCollection, query, where, orderBy } = useFirestore();
   const { isProduction, environment } = useEnvironment();
@@ -699,7 +703,7 @@ const SejarahTransaksi = () => {
                 <>
                   <div className="st-summary-card">
                     <span className="st-summary-card-label">Total Keuntungan</span>
-                    <span className="st-summary-card-value st-profit-value">
+                    <span className={`st-summary-card-value st-profit-value${lossClass(itemSummary.totalProfit)}`}>
                       {formatCurrency(itemSummary.totalProfit)}
                     </span>
                     <span className="st-summary-card-sublabel">
@@ -833,7 +837,7 @@ const SejarahTransaksi = () => {
                               {formatCurrency(item.stockWorth)}
                             </td>
                             <td className="right">
-                              <span className="st-profit-value">
+                              <span className={`st-profit-value${lossClass(item.profitMargin)}`}>
                                 {formatCurrency(item.profitMargin)}
                               </span>
                             </td>
@@ -914,7 +918,7 @@ const SejarahTransaksi = () => {
                       <span className="st-day-section-total">
                         Total: {formatCurrency(dayGroup.total)}
                         {showProfit && (
-                          <span className="st-day-section-profit">
+                          <span className={`st-day-section-profit${lossClass(dayTotalProfit)}`}>
                             {" | Untung: "}{formatCurrency(dayTotalProfit)}
                           </span>
                         )}
@@ -982,8 +986,8 @@ const SejarahTransaksi = () => {
                                   </div>
                                 </div>
                                 <div className="st-tx-right">
-                                  {showProfit && txTotalProfit > 0 && (
-                                    <span className="st-tx-header-profit">
+                                  {showProfit && Math.round(txTotalProfit) !== 0 && (
+                                    <span className={`st-tx-header-profit${lossClass(txTotalProfit)}`}>
                                       Untung: {formatCurrency(txTotalProfit)}
                                     </span>
                                   )}
@@ -1009,8 +1013,8 @@ const SejarahTransaksi = () => {
                                       <div key={itemIdx} className="st-tx-item-row">
                                         <span className="st-tx-item-name">
                                           {item.itemName}
-                                          {showProfit && item.profit > 0 && (
-                                            <span className="st-tx-item-profit-badge">
+                                          {showProfit && Math.round(item.profit) !== 0 && (
+                                            <span className={`st-tx-item-profit-badge${lossClass(item.profit)}`}>
                                               (Untung: {formatCurrency(item.profit)})
                                             </span>
                                           )}

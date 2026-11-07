@@ -117,3 +117,52 @@ describe("transaction history with a stock discrepancy", () => {
     expect(within(detailRow).getByText("Rp 10.276")).toBeInTheDocument();
   });
 });
+
+describe("transaction history with a sale costing more than its price", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const date = new Date();
+    const timestamp = {
+      seconds: Math.floor(date.getTime() / 1000),
+      toDate: () => date,
+    };
+    const items = [
+      { itemId: "gula", itemName: "Gula 1kg", quantity: 1, unit: "pcs", price: 18000, subtotal: 18000 },
+      { itemId: "teh", itemName: "Teh Celup", quantity: 2, unit: "pcs", price: 5000, subtotal: 10000 },
+    ];
+    mockQueryCollection.mockImplementation(async (collection) => {
+      if (collection === "transactionDetail") {
+        return [{ id: "loss-sale", timestamp, items, total: 28000 }];
+      }
+      if (collection === "stockTransactions") {
+        return [
+          // Unit cost saved far above the selling price.
+          { ...items[0], transactionId: "loss-sale", timestampInMillisEpoch: timestamp,
+            transactionType: "penjualan", costPrice: 300000, stockWorth: 300000 },
+          { ...items[1], transactionId: "loss-sale", timestampInMillisEpoch: timestamp,
+            transactionType: "penjualan", costPrice: 4000, stockWorth: 8000 },
+        ];
+      }
+      return [];
+    });
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  test("shows the loss on the day, the transaction and the item instead of hiding it", async () => {
+    render(<SejarahTransaksi />);
+
+    const dayTotal = await screen.findByText(/Total: Rp 28.000/);
+    const dayProfit = within(dayTotal).getByText(/Untung: -Rp 280.000/);
+    expect(dayProfit).toHaveClass("st-loss");
+
+    fireEvent.click(dayTotal);
+    const txProfit = screen.getByText("Untung: -Rp 280.000");
+    expect(txProfit).toHaveClass("st-tx-header-profit", "st-loss");
+
+    fireEvent.click(screen.getByText("Non-Anggota"));
+    expect(screen.getByText("(Untung: -Rp 282.000)")).toHaveClass("st-loss");
+    expect(screen.getByText("(Untung: Rp 2.000)")).not.toHaveClass("st-loss");
+  });
+});

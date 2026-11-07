@@ -1,4 +1,18 @@
-import { groupTransactionsByItem } from "./transactionHistoryService";
+import {
+  formatCurrency,
+  groupTransactionsByItem,
+} from "./transactionHistoryService";
+
+describe("formatCurrency", () => {
+  test.each([
+    [313500, "Rp 313.500"],
+    [-1222866, "-Rp 1.222.866"],
+    [-0.4, "Rp 0"],
+    [0, "Rp 0"],
+  ])("formats %s as %s", (value, expected) => {
+    expect(formatCurrency(value)).toBe(expected);
+  });
+});
 
 describe("transaction history profit totals", () => {
   test("costs every sold Kanzler Hot unit when recorded inventory was empty", () => {

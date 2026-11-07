@@ -45,7 +45,8 @@ export function getDisplayQty(tx) {
 export function formatCurrency(value) {
   if (!value) return "Rp 0";
   const numeric = Math.round(Number(value)) || 0;
-  return "Rp " + numeric.toLocaleString("id-ID");
+  const sign = numeric < 0 ? "-" : "";
+  return sign + "Rp " + Math.abs(numeric).toLocaleString("id-ID");
 }
 
 /**

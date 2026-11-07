@@ -1528,6 +1528,19 @@
   margin-right: 8px;
 }
 
+/* Negative Untung (UI guide: negative amounts use red-500). */
+.st-profit-value.st-loss,
+.st-day-section-profit.st-loss,
+.st-tx-item-profit-badge.st-loss,
+.st-tx-header-profit.st-loss {
+  color: #ef4444;
+}
+
+.st-tx-item-profit-badge.st-loss,
+.st-tx-header-profit.st-loss {
+  background-color: #fef2f2;
+}
+
 /* Action buttons (reprint & delete) */
 .st-tx-actions-row,
 .st-tx-reprint-row {
