@@ -23,3 +23,6 @@ firebase-debug.log*
 firestore-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Reports and backups from scripts/round_stock_decimals.js (real stock data)
+/scripts/backups/
