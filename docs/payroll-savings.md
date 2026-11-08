@@ -11,3 +11,5 @@ Scheduled and HTTP/manual legacy increments re-read membership in each transacti
 Cutover is November 2026 payroll. The scheduled batch dated 4 November belongs to October. The Internal-BAK migration preserves balances/logs and marks legacy registration fees settled. Deploy these compatible functions and hosting before Internal-BAK, then apply the reviewed dry-run migration before November drafts are prepared. No production member is changed by tests.
 
 Tests: run `npm test` in `functions/`, and from this project's root run the Auth/Firestore/Functions emulator command documented in Internal-BAK `docs/features/koperasi.md`. The integration suite also invokes the sibling Internal-BAK checkout's locking saga, including an injected failure after the Koperasi credit but before the SAKU lock completes.
+
+The selected functions now run on Node.js 22. The previous Node.js 20 runtime could no longer be deployed after 30 October 2026. No dependency versions changed for this runtime update.
