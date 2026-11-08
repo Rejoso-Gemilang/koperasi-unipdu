@@ -14,12 +14,14 @@ const {
   resolveMatchedEligibleLoans,
 } = require("./loanProgression");
 
+const { savingsPlan, assertSavingsPlan } = require('./savingsProgression');
+
 const payrollHmacSecret = defineSecret("INTERNAL_PAYROLL_HMAC_SECRET");
 const MAX_SIGNATURE_AGE_SECONDS = 300;
 
 function bridgeErrorStatus(error) {
   if (!(error instanceof LoanProgressionError)) return 500;
-  if (["LOAN_STATE_CHANGED", "LOAN_NOT_ACTIVE"].includes(error.code)) return 409;
+  if (!["INVALID_PAYLOAD", "INVALID_ACTION", "INVALID_PERIOD", "INVALID_OPERATION", "INVALID_EMPLOYEE", "INVALID_SIGNATURE"].includes(error.code)) return 409;
   return 400;
 }
 
@@ -43,10 +45,10 @@ function verifyBridgeSignature(req) {
 }
 
 function validateBridgePayload(payload) {
-  if (!payload || payload.schemaVersion !== 1) {
+  if (!payload || ![1, 2].includes(payload.schemaVersion)) {
     throw new LoanProgressionError("INVALID_PAYLOAD", "Payload integrasi tidak valid.");
   }
-  if (!["preview", "apply"].includes(payload.action)) {
+  if (!["preview", "apply", "validate"].includes(payload.action)) {
     throw new LoanProgressionError("INVALID_ACTION", "Aksi integrasi tidak valid.");
   }
   if (!/^\d{4}-\d{2}$/.test(payload.payrollPeriod || "")) {
@@ -81,21 +83,52 @@ async function loadProductionLoans() {
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
+async function loadSavingsMember(payload, transaction) {
+  const db = admin.firestore();
+  const read = (ref) => transaction ? transaction.get(ref) : ref.get();
+  const id = payload.employee.koperasiUserId;
+  const uid = payload.employee.koperasiAuthUid;
+  let snapshot;
+  if (id) snapshot = await read(db.collection("users").doc(id));
+  else if (uid) {
+    const matches = await read(db.collection("users").where("uid", "==", uid));
+    if (matches.size > 1) throw new LoanProgressionError("AMBIGUOUS_MEMBER", "UID anggota Koperasi tidak unik.");
+    snapshot = matches.docs[0] || await read(db.collection("users").doc(uid));
+  }
+  if (payload.schemaVersion === 1 && !id && !snapshot?.exists) return null;
+  if ((id || uid) && !snapshot?.exists) throw new LoanProgressionError("MEMBER_NOT_FOUND", "Anggota tertaut tidak ditemukan.");
+  if (!snapshot?.exists) return null;
+  const member = { ...snapshot.data(), id: snapshot.id };
+  if (uid && (member.uid || member.id) !== uid) throw new LoanProgressionError("MEMBER_LINK_CHANGED", "Tautan UID anggota tidak sesuai.");
+  return member;
+}
+
 async function previewPlan(payload) {
-  const loans = await loadProductionLoans();
-  return resolveInstallmentPlan({
-    loans,
-    employee: payload.employee,
-    payrollPeriod: payload.payrollPeriod,
+  const [loans, member] = await Promise.all([loadProductionLoans(), loadSavingsMember(payload)]);
+  const plan = resolveInstallmentPlan({
+    loans, employee: payload.employee, payrollPeriod: payload.payrollPeriod,
     expectedDeduction: payload.expectedDeduction,
   });
+  if (payload.schemaVersion === 1) {
+    if (member?.payrollSavings && payload.payrollPeriod >= member.payrollSavings.startPeriod) {
+      throw new LoanProgressionError("SAVINGS_V2_REQUIRED", "Refresh payroll menggunakan integrasi iuran terbaru.");
+    }
+    return plan;
+  }
+  const marker = member ? await admin.firestore().collection("payrollSavingsProgressions")
+    .doc(`${payload.payrollPeriod}__${member.id}`).get() : null;
+  if (marker?.exists && marker.data().internalSlipId !== payload.slipId) {
+    throw new LoanProgressionError("SAVINGS_SLIP_CONFLICT", "Iuran anggota sudah diproses pada slip lain.");
+  }
+  const next = { ...plan, schemaVersion: 2, savings: marker?.exists ? marker.data().plan : savingsPlan(member, payload.payrollPeriod) };
+  return { ...next, planHash: hashPlan(next) };
 }
 
 function validateSubmittedPlan(payload) {
   const plan = payload.plan;
   if (
     !plan ||
-    plan.schemaVersion !== 1 ||
+    plan.schemaVersion !== payload.schemaVersion ||
     plan.payrollPeriod !== payload.payrollPeriod ||
     plan.expectedDeduction !== payload.expectedDeduction ||
     !Array.isArray(plan.loans) ||
@@ -107,13 +140,28 @@ function validateSubmittedPlan(payload) {
   return plan;
 }
 
-async function applyPlan(payload) {
+async function applyPlan(payload, validateOnly = false) {
   const submittedPlan = validateSubmittedPlan(payload);
   const db = admin.firestore();
   const loansCollection = db.collection("simpanPinjam");
   const markersCollection = db.collection("payrollInstallmentProgressions");
 
   return db.runTransaction(async (transaction) => {
+    const member = await loadSavingsMember(payload, transaction);
+    const savingsRef = member ? db.collection("payrollSavingsProgressions").doc(`${payload.payrollPeriod}__${member.id}`) : null;
+    const savingsMarker = savingsRef ? await transaction.get(savingsRef) : null;
+    if (payload.schemaVersion === 1 && member?.payrollSavings && payload.payrollPeriod >= member.payrollSavings.startPeriod) {
+      throw new LoanProgressionError("SAVINGS_V2_REQUIRED", "Refresh payroll menggunakan integrasi iuran terbaru.");
+    }
+    if (payload.schemaVersion === 2) {
+      if (savingsMarker?.exists) {
+        const marker = savingsMarker.data();
+        if (marker.internalSlipId !== payload.slipId || marker.planHash !== submittedPlan.planHash) {
+          throw new LoanProgressionError("SAVINGS_MARKER_CONFLICT", "Iuran anggota sudah diproses dengan slip atau rencana berbeda.");
+        }
+        assertSavingsPlan(submittedPlan.savings, marker.plan);
+      } else assertSavingsPlan(submittedPlan.savings, savingsPlan(member, payload.payrollPeriod));
+    }
     const allLoansSnapshot = await transaction.get(loansCollection);
     const allLoans = allLoansSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     const submittedIds = new Set(submittedPlan.loans.map((loan) => loan.loanId));
@@ -178,11 +226,11 @@ async function applyPlan(payload) {
         actor: actorFromPayload(payload),
         timestamp,
       });
-      transaction.update(loanSnapshot.ref, {
+      if (!validateOnly) transaction.update(loanSnapshot.ref, {
         ...progression.update,
         updatedAt: timestamp,
       });
-      transaction.create(markerRefs[index], {
+      if (!validateOnly) transaction.create(markerRefs[index], {
         schemaVersion: 1,
         payrollPeriod: payload.payrollPeriod,
         loanId: item.loanId,
@@ -199,12 +247,56 @@ async function applyPlan(payload) {
       receipts.push(progression.receipt);
     }
 
+    let savingsReceipt = null;
+    const savings = submittedPlan.savings;
+    if (payload.schemaVersion === 2 && savings && savingsRef) {
+      if (savingsMarker?.exists) savingsReceipt = { ...savingsMarker.data().receipt, outcome: "already_applied" };
+      else {
+        const previousBalance = Number(member.nominalTabungan || 0);
+        if (!Number.isSafeInteger(previousBalance) || previousBalance < 0) {
+          throw new LoanProgressionError("INVALID_SAVINGS_BALANCE", "Saldo tabungan anggota tidak valid.");
+        }
+        savingsReceipt = { memberId: member.id, initial: savings.initial, monthly: savings.monthly,
+          amount: savings.total, previousBalance, newBalance: previousBalance + savings.total,
+          outcome: savings.total ? "credited" : "not_applicable" };
+        if (!validateOnly) {
+          transaction.create(savingsRef, { schemaVersion: 2, payrollPeriod: payload.payrollPeriod,
+            internalSlipId: payload.slipId, operationId: payload.operationId, planHash: submittedPlan.planHash,
+            source: "internal_bak_payroll", plan: savings, receipt: savingsReceipt, createdAt: timestamp });
+          if (savings.total > 0) {
+            const logId = `payroll_${payload.payrollPeriod}__${member.id}`;
+            const paymentType = savings.initial ? "first_payment" : "monthly_payment";
+            transaction.update(db.collection("users").doc(member.id), {
+              nominalTabungan: savingsReceipt.newBalance, lastPaymentDate: timestamp,
+              lastPaymentAmount: savings.total, lastPaymentType: paymentType, updatedAt: timestamp,
+              ...(savings.initial ? { "payrollSavings.initialPaid": true, "payrollSavings.initialPaidPeriod": payload.payrollPeriod } : {}),
+            });
+            transaction.create(db.collection("tabunganLogsPerUser").doc(logId), {
+              userId: member.id, userEmail: member.email || "", userName: member.nama || "",
+              paymentDate: timestamp, createdAt: timestamp, amount: savings.total, paymentType,
+              previousBalance, newBalance: savingsReceipt.newBalance, iuranPokok: savings.initial,
+              iuranWajib: savings.monthly, tabunganLogId: logId, payrollPeriod: payload.payrollPeriod,
+              internalSlipId: payload.slipId, source: "internal_bak_payroll",
+            });
+            transaction.create(db.collection("tabunganLogs").doc(logId), {
+              type: "payroll", source: "internal_bak_payroll", date: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+              timestamp, timestampEpoch: timestamp.seconds, createdAt: timestamp, processedCount: 1, errorCount: 0,
+              payrollPeriod: payload.payrollPeriod, entries: [{ userId: member.id, nama: member.nama || "",
+                nomorWhatsapp: member.nomorWhatsapp || "", nominalIncrement: savings.total,
+                tipePembayaran: savings.initial ? "iuran pokok + iuran wajib" : "iuran wajib",
+                previousBalance, newBalance: savingsReceipt.newBalance, tabunganLogsPerUserId: logId, timestamp }],
+            });
+          }
+        }
+      }
+    }
     return {
-      schemaVersion: 1,
+      schemaVersion: payload.schemaVersion,
+      ...(payload.schemaVersion === 2 ? { savings: savingsReceipt } : {}),
       operationId: payload.operationId,
       payrollPeriod: payload.payrollPeriod,
       planHash: submittedPlan.planHash,
-      status: receipts.length === 0 ? "not_applicable" : "applied",
+      status: receipts.length === 0 && !savingsReceipt?.amount ? "not_applicable" : "applied",
       loans: receipts,
     };
   });
@@ -222,7 +314,7 @@ const payrollLoanBridge = onRequest(
       validateBridgePayload(req.body);
       const result = req.body.action === "preview"
         ? await previewPlan(req.body)
-        : await applyPlan(req.body);
+        : await applyPlan(req.body, req.body.action === "validate");
       res.status(200).json(result);
     } catch (error) {
       console.error("Payroll loan bridge failed", error);
@@ -319,4 +411,25 @@ const recordManualLoanInstallment = onCall({ timeoutSeconds: 30, memory: "256MiB
   }
 });
 
-module.exports = { payrollLoanBridge, recordManualLoanInstallment };
+const allocateMemberNumber = onCall(async (request) => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login diperlukan.");
+  const db = admin.firestore();
+  return db.runTransaction(async transaction => {
+    const ref = db.doc("counters/memberNumber");
+    const [counter, users] = await Promise.all([transaction.get(ref), transaction.get(db.collection("users"))]);
+    const year = new Intl.DateTimeFormat("en", { year: "2-digit", timeZone: "Asia/Jakarta" }).format(new Date());
+    const maximum = Math.max(0, ...users.docs.map(doc => String(doc.data().nomorAnggota || "")).filter(number => number.startsWith(year)).map(number => Number(number.slice(2)) || 0));
+    const sequence = Math.max(maximum, counter.data()?.year === year ? Number(counter.data().sequence || 0) : 0) + 1;
+    transaction.set(ref, { year, sequence });
+    return { nomorAnggota: `${year}${String(sequence).padStart(3, "0")}` };
+  });
+});
+const triggerLegacySavings = onCall({ timeoutSeconds: 300 }, async request => {
+  if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Login diperlukan.");
+  const users = await admin.firestore().collection("users").where("uid", "==", request.auth.uid).get();
+  const direct = await admin.firestore().doc(`users/${request.auth.uid}`).get();
+  const role = direct.data()?.role || users.docs[0]?.data()?.role;
+  if (!["Admin", "BAK", "Director", "Direktur", "Wakil Rektor 2"].includes(role)) throw new HttpsError("permission-denied", "Akses ditolak.");
+  return require('./legacySavings').incrementLegacySavings();
+});
+module.exports = { payrollLoanBridge, recordManualLoanInstallment, allocateMemberNumber, triggerLegacySavings };

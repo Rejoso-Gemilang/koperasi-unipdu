@@ -2,14 +2,14 @@ import {
   collection,
   query,
   orderBy,
-  limit,
   getDocs,
   writeBatch,
   doc,
   getDoc,
   updateDoc,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, functions } from "../firebase";
+import { httpsCallable } from "firebase/functions";
 
 /**
  * One-time function to update all users with a unique nomorAnggota
@@ -87,39 +87,8 @@ export const updateAllUsersWithMemberNumbers = async () => {
  * @returns {Promise<string>} The next available member number in format YYNNNNN
  */
 export const getNextMemberNumber = async () => {
-  try {
-    const currentYear = new Date().getFullYear().toString().slice(-2); // Get last 2 digits of current year
-
-    // Query for the latest member number for the current year
-    const usersRef = collection(db, "users");
-
-    // Get the highest member number for the current year
-    const q = query(usersRef, orderBy("nomorAnggota", "desc"), limit(1));
-
-    const querySnapshot = await getDocs(q);
-
-    let nextNumber = 1; // Default start number
-
-    if (!querySnapshot.empty) {
-      const latestDoc = querySnapshot.docs[0];
-      const latestNumber = latestDoc.data().nomorAnggota;
-
-      // Check if the latest number is from the current year
-      if (latestNumber && latestNumber.startsWith(currentYear)) {
-        // Extract the sequence number and increment
-        const sequenceStr = latestNumber.slice(2); // Remove year prefix
-        const sequence = parseInt(sequenceStr, 10);
-        nextNumber = sequence + 1;
-      }
-      // If it's from a previous year, nextNumber remains 1
-    }
-
-    // Format the new member number
-    return `${currentYear}${nextNumber.toString().padStart(3, "0")}`;
-  } catch (error) {
-    console.error("Error generating next member number:", error);
-    throw error;
-  }
+  const result = await httpsCallable(functions, "allocateMemberNumber")();
+  return result.data.nomorAnggota;
 };
 
 /**

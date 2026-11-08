@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { db, getEnvironmentCollectionPath } from "../firebase";
+import { db, functions, getEnvironmentCollectionPath } from "../firebase";
+import { httpsCallable } from "firebase/functions";
 import {
   collection,
   getDocs,
@@ -11,7 +12,6 @@ import {
   where,
   serverTimestamp,
   getDoc,
-  setDoc,
 } from "firebase/firestore";
 import { useEnvironment } from "../context/EnvironmentContext";
 import { jsPDF } from "jspdf";
@@ -87,190 +87,13 @@ const TabunganLogs = () => {
   };
 
   const manualTriggerIncrement = async () => {
+    setProgressModal({ isVisible: true, type: "trigger", progress: 0, total: 1, currentUser: "Memproses anggota...", status: "Memproses..." });
     try {
-      setProgressModal({
-        isVisible: true,
-        type: "trigger",
-        progress: 0,
-        total: 0,
-        currentUser: "Mengambil data anggota...",
-        status: "Memproses...",
-      });
-
-      // Get all approved members with Payroll Deduction payment status
-      const usersQuery = query(
-        collection(db, "users"),
-        where("role", "==", "Member"),
-        where("membershipStatus", "==", "approved"),
-        where("paymentStatus", "==", "Payroll Deduction")
-      );
-      const querySnapshot = await getDocs(usersQuery);
-
-      if (querySnapshot.empty) {
-        setProgressModal((prev) => ({ ...prev, isVisible: false }));
-        alert(
-          "Tidak ada anggota dengan status 'Payroll Deduction' yang ditemukan"
-        );
-        return;
-      }
-
-      const members = querySnapshot.docs;
-      const totalMembers = members.length;
-      let processedCount = 0;
-      let errorCount = 0;
-      const logEntries = [];
-
-      // Create log document info
-      const currentDate = new Date();
-      const logDate = `${currentDate.getFullYear()}-${String(
-        currentDate.getMonth() + 1
-      ).padStart(2, "0")}-${String(currentDate.getDate()).padStart(2, "0")}`;
-      const timestampEpoch = Math.floor(currentDate.getTime() / 1000);
-      const logDocumentName = `${logDate}_tabunganBulanan_${timestampEpoch}`;
-
-      setProgressModal((prev) => ({
-        ...prev,
-        total: totalMembers,
-        currentUser: "Memulai pemrosesan anggota...",
-        status: "Memproses...",
-      }));
-
-      // Process each member
-      for (const userDoc of members) {
-        try {
-          const userData = userDoc.data();
-          const userId = userDoc.id;
-
-          setProgressModal((prev) => ({
-            ...prev,
-            progress: processedCount + 1,
-            currentUser: userData.nama || `User ${userId}`,
-            status: "Memproses...",
-          }));
-
-          // Calculate increment
-          const currentNominalTabungan = userData.nominalTabungan || 0;
-          const iuranPokok = userData.iuranPokok || 250000;
-          const iuranWajib = userData.iuranWajib || 25000;
-
-          let incrementAmount;
-          let tipePembayaran;
-
-          if (currentNominalTabungan === 0) {
-            incrementAmount = iuranPokok + iuranWajib;
-            tipePembayaran = "iuran pokok + iuran wajib";
-          } else {
-            incrementAmount = iuranWajib;
-            tipePembayaran = "iuran wajib";
-          }
-
-          const newNominalTabungan = currentNominalTabungan + incrementAmount;
-
-          // Update user document
-          const userRef = doc(db, "users", userId);
-          await updateDoc(userRef, {
-            nominalTabungan: newNominalTabungan,
-            lastPaymentDate: serverTimestamp(),
-            lastPaymentAmount: incrementAmount,
-            lastPaymentType:
-              currentNominalTabungan === 0
-                ? "first_payment"
-                : "monthly_payment",
-            updatedAt: serverTimestamp(),
-          });
-
-          // Create a tabungan log per user record
-          const tabunganLogsPerUserRef = doc(
-            collection(db, tlpuPath)
-          );
-          await setDoc(tabunganLogsPerUserRef, {
-            userId: userId,
-            userEmail: userData.email,
-            userName: userData.nama,
-            paymentDate: serverTimestamp(),
-            amount: incrementAmount,
-            paymentType:
-              currentNominalTabungan === 0
-                ? "first_payment"
-                : "monthly_payment",
-            previousBalance: currentNominalTabungan,
-            newBalance: newNominalTabungan,
-            iuranPokok:
-              currentNominalTabungan === 0 ? userData.iuranPokok || 250000 : 0,
-            iuranWajib: userData.iuranWajib || 25000,
-            tabunganLogId: logDocumentName,
-            createdAt: serverTimestamp(),
-          });
-
-          // Add to log entries
-          logEntries.push({
-            userId: userId,
-            nama: userData.nama,
-            nomorWhatsapp: userData.nomorWhatsapp,
-            nominalIncrement: incrementAmount,
-            tipePembayaran: tipePembayaran,
-            previousBalance: currentNominalTabungan,
-            newBalance: newNominalTabungan,
-            tabunganLogsPerUserId: tabunganLogsPerUserRef.id,
-            timestamp: new Date(),
-          });
-
-          processedCount++;
-
-          // Small delay to show progress
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        } catch (userError) {
-          console.error(`Error processing user ${userDoc.id}:`, userError);
-          errorCount++;
-        }
-      }
-
-      // Create tabungan log document
-      if (logEntries.length > 0) {
-        setProgressModal((prev) => ({
-          ...prev,
-          currentUser: "Menyimpan log...",
-          status: "Menyelesaikan...",
-        }));
-
-        const logRef = doc(db, tlPath, logDocumentName);
-        await setDoc(logRef, {
-          type: "tabunganBulanan",
-          date: logDate,
-          timestamp: serverTimestamp(),
-          timestampEpoch: timestampEpoch,
-          processedCount: processedCount,
-          errorCount: errorCount,
-          entries: logEntries,
-          createdAt: serverTimestamp(),
-        });
-      }
-
-      setProgressModal({
-        isVisible: true,
-        type: "trigger",
-        progress: totalMembers,
-        total: totalMembers,
-        currentUser: "Selesai!",
-        status: `Berhasil memproses ${processedCount} anggota, ${errorCount} error`,
-      });
-
-      // Auto close after 2 seconds
-      setTimeout(() => {
-        setProgressModal((prev) => ({ ...prev, isVisible: false }));
-        fetchTabunganLogs(); // Refresh logs
-      }, 2000);
+      const result = await httpsCallable(functions, "triggerLegacySavings", { timeout: 300000 })();
+      setProgressModal(previous => ({ ...previous, progress: 1, status: `${result.data.processedCount} anggota diproses; ${result.data.skippedCount} mengikuti payroll.` }));
+      await fetchTabunganLogs();
     } catch (error) {
-      console.error("Error in manual trigger:", error);
-      setProgressModal((prev) => ({
-        ...prev,
-        status: `Error: ${error.message}`,
-        currentUser: "Gagal memproses",
-      }));
-
-      setTimeout(() => {
-        setProgressModal((prev) => ({ ...prev, isVisible: false }));
-      }, 3000);
+      setProgressModal(previous => ({ ...previous, status: error.message || "Tabungan belum dapat diproses." }));
     }
   };
 
@@ -514,6 +337,7 @@ const TabunganLogs = () => {
   };
 
   const handleRollback = async (log) => {
+    if (log.source === "internal_bak_payroll") return;
     const confirmRollback = window.confirm(
       `Apakah Anda yakin ingin melakukan rollback untuk log tanggal ${formatIndonesianDate(
         log.date
@@ -744,6 +568,8 @@ const TabunganLogs = () => {
                 </button>
                 <button
                   className="rollback-button"
+                  disabled={log.source === "internal_bak_payroll"}
+                  title={log.source === "internal_bak_payroll" ? "Koreksi melalui payroll" : undefined}
                   onClick={() => handleRollback(log)}
                 >
                   Rollback

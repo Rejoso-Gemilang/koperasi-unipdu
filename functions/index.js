@@ -242,5 +242,7 @@ exports.incrementNominalTabungan = incrementNominalTabungan;
 exports.manualIncrementNominalTabungan = manualIncrementNominalTabungan;
 exports.initializeNominalTabungan = initializeNominalTabungan;
 exports.rollbackTabunganLog = rollbackTabunganLog;
+exports.allocateMemberNumber = require('./payrollLoanFunctions').allocateMemberNumber;
+exports.triggerLegacySavings = require('./payrollLoanFunctions').triggerLegacySavings;
 exports.payrollLoanBridge = payrollLoanBridge;
 exports.recordManualLoanInstallment = recordManualLoanInstallment;

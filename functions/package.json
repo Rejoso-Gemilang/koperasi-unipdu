@@ -2,7 +2,7 @@
   "name": "functions",
   "description": "Cloud Functions for Firebase",
   "scripts": {
-    "test": "node --test loanProgression.test.js",
+    "test": "node --test loanProgression.test.js savingsProgression.test.js",
     "test:integration": "node payrollLoanFunctions.integration.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",

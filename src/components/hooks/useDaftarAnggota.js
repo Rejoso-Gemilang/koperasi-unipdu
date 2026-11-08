@@ -14,8 +14,20 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db, getEnvironmentCollection, auth } from "../../firebase";
-import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import { createUserWithEmailAndPassword, getAuth, connectAuthEmulator, signOut } from "firebase/auth";
+import { initializeApp, deleteApp } from "firebase/app";
 import { getNextMemberNumber } from "../../utils/memberNumberUtils";
+
+async function createMemberIdentity(email, password) {
+  const isolatedApp = initializeApp(auth.app.options, `member-registration-${Date.now()}-${Math.random()}`);
+  const isolatedAuth = getAuth(isolatedApp);
+  if (auth.emulatorConfig) {
+    const { protocol, host, port } = auth.emulatorConfig;
+    connectAuthEmulator(isolatedAuth, `${protocol}://${host}:${port}`, { disableWarnings: true });
+  }
+  try { return await createUserWithEmailAndPassword(isolatedAuth, email, password); }
+  finally { try { await signOut(isolatedAuth); } finally { await deleteApp(isolatedApp); } }
+}
 
 const NUMERIC_SORT_KEYS = new Set(["nominalTabungan"]);
 
@@ -217,14 +229,10 @@ const useDaftarAnggota = (isProduction = true) => {
       const docId = `${formattedNama.replace(/\s+/g, "_")}_${timestamp}`;
 
       // Create user in Firebase Auth without signing in
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
+      const userCredential = await createMemberIdentity(
         newMemberData.email,
         newMemberData.password
       );
-
-      // Sign out the newly created user (we don't want to stay logged in as them)
-      await signOut(auth);
 
       // Format the WhatsApp number before saving
       const formattedWhatsApp = formatWhatsAppNumber(newMemberData.nomorWhatsapp);
@@ -305,14 +313,10 @@ const useDaftarAnggota = (isProduction = true) => {
       const docId = `${formattedNama.replace(/\s+/g, "_")}_${timestamp}`;
 
       // Create user in Firebase Auth - using NIK as password
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
+      const userCredential = await createMemberIdentity(
         rowData.email,
         rowData.nik.toString() // Ensure it's a string
       );
-
-      // Sign out immediately
-      await signOut(auth);
 
       // Format the WhatsApp number
       const formattedWhatsApp = formatWhatsAppNumber(rowData.nomorWhatsapp);

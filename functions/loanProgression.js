@@ -205,6 +205,7 @@ function hashPlan(plan) {
     resolvedUserId: plan.resolvedUserId,
     expectedDeduction: plan.expectedDeduction,
     loans: plan.loans,
+    ...(plan.schemaVersion === 2 ? { savings: plan.savings ?? null } : {}),
   };
   return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
